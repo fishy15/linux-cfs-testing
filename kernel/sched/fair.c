@@ -8795,29 +8795,64 @@ struct lb_env {
 };
 
 enum karan_codepath {
-  REBALANCE_DOMAINS,
-  NEWIDLE_BALANCE
+	REBALANCE_DOMAINS,
+	NEWIDLE_BALANCE
 };
 
 struct karan_lb_logmsg {
-  struct lb_env env;
+ 	struct lb_env env;
+};
+
+struct karan_rd_entry_logmsg {
+	u64 max_newidle_lb_cost;
+	int continue_balancing;
+	unsigned long interval;
+	int need_serialize;
+	bool after_interval;
+	struct karan_lb_logmsg lb_logmsg;
+	enum cpu_idle_type new_idle;
+	int busy;
 };
 
 struct karan_rd_logmsg {
-  uint32_t x;
+	int cpu;
+	enum cpu_idle_type idle;
+	int sched_idle_cpu;
+  	struct karan_rd_entry_logmsg *sd_buf;
+	int num_entries;
+};
+
+struct karan_nb_entry_logmsg {
+	int continue_balancing;
+	u64 curr_cost;
+	struct karan_lb_logmsg lb_logmsg;
+	int pulled_task;
+	u64 domain_cost;
+	unsigned int nr_running; // might be constant, if so then move to karan_nb_logmsg
 };
 
 struct karan_nb_logmsg {
-  uint64_t y;
+	int this_cpu;
+	unsigned long misfit_task_load; // after update_misfit_status is called
+	unsigned int ttwu_pending;
+	u64 idle_stamp;
+	bool cpu_active;
+	struct sched_domain *sd;
+	int rd_overload;
+	u64 avg_idle;
+	struct karan_nb_entry_logmsg *sd_buf;
+	int num_entries;
+	u64 max_idle_balance_cost;
+	unsigned int h_nr_running;
 };
   
 struct karan_logmsg {
-  enum karan_codepath codepath;
-  union {
-    struct karan_rd_logmsg rb_msg;
-    struct karan_nb_logmsg nb_msg;
-  };
-  struct karan_lb_logmsg lb_msg;
+	enum karan_codepath codepath;
+	union {
+		struct karan_rd_logmsg rd_msg;
+		struct karan_nb_logmsg nb_msg;
+	};
+	struct karan_lb_logmsg lb_msg;
 };
 
 /*
@@ -11283,6 +11318,51 @@ static int should_we_balance(struct lb_env *env)
 	return group_balance_cpu(sg) == env->dst_cpu;
 }
 
+static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath codepath) {
+	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
+	if (++logbuf->position == CONFIG_KARAN_LOGBUF_SIZE) {
+		logbuf->position = 0;
+	}
+
+	void *raw_msg_ptr = (logbuf->msg_area + logbuf->position * logbuf->msg_size);
+	struct karan_logmsg *msg = (struct karan_logmsg *) raw_msg_ptr;
+	logbuf->msgs[logbuf->position] = msg;
+
+	msg->codepath = codepath;
+	if (codepath == REBALANCE_DOMAINS) {
+		msg->rd_msg.sd_buf = (struct karan_rd_entry_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
+	} else {
+		msg->nb_msg.sd_buf = (struct karan_nb_entry_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
+	}
+	
+	return msg;
+}
+
+static inline struct karan_logmsg *karan_rd_msg_alloc (struct rq *rq) {
+	return _karan_msg_alloc(rq, REBALANCE_DOMAINS);
+}
+
+static inline struct karan_logmsg *karan_nb_msg_alloc (struct rq *rq) {
+	return _karan_msg_alloc(rq, NEWIDLE_BALANCE);
+}
+
+static void karan_log_init (struct rq *rq) {
+	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
+	
+	int sd_count;
+	struct sched_domain *sd;
+	for_each_domain(rq->cpu, sd) { sd_count++; }
+	logbuf->sd_count = sd_count;
+	
+	int rd_msg_size = sd_count * sizeof(struct karan_rd_entry_logmsg);
+	int nb_msg_size = sd_count * sizeof(struct karan_nb_entry_logmsg);
+	int max_submsg_size = rd_msg_size > nb_msg_size ? rd_msg_size : nb_msg_size;
+	int msg_size = sizeof(struct karan_logmsg) + max_submsg_size;
+	logbuf->msg_size = msg_size;
+	
+	logbuf->msg_area = kzalloc(msg_size * CONFIG_KARAN_LOGBUF_SIZE, GFP_KERNEL);
+}
+
 /*
  * Check this_cpu to ensure it is balanced within domain. Attempt to move
  * tasks if there is an imbalance.
@@ -11291,10 +11371,6 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 			struct sched_domain *sd, enum cpu_idle_type idle,
 			int *continue_balancing)
 {
-  if (unlikely(this_rq->cfs.karan_logbuf.msgs == NULL)) {
-    this_rq->cfs.karan_logbuf.msgs = kzalloc(sizeof(struct karan_logmsg) * CONFIG_KARAN_LOGBUF_SIZE, GFP_KERNEL);
-  }
-  
 	int ld_moved, cur_ld_moved, active_balance = 0;
 	struct sched_domain *sd_parent = sd->parent;
 	struct sched_group *group;
@@ -11733,6 +11809,13 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 	//     if we are after the interval or not (i.e. do we run load_balance)
 	//     new idle, busy after each iteration
 	// other information seems to just be updating state for the next iteration? we can log or ignore
+
+	if (unlikely(rq->cfs.karan_logbuf.sd_count == 0)) {
+		karan_log_init(rq);
+	}
+	struct karan_logmsg *msg = karan_rd_msg_alloc(rq);
+	msg->rd_msg.cpu = rq->cpu;
+	
 	int continue_balancing = 1;
 	int cpu = rq->cpu;
 	int busy = idle != CPU_IDLE && !sched_idle_cpu(cpu);
@@ -12348,11 +12431,18 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 	//     curr_cost
 	//     load_balance and result, pulled_task
 	//     domain_cost
-	//     this_rq->nur_running (might be constant?)
+	//     this_rq->nr_running (might be constant?)
 	//
 	// rest of the info may only be for updates but we can log anyways
 	// this_rq->max_idle_balance_cost
 	// this_rq->cfs.h_nr_running
+	
+	if (unlikely(this_rq->cfs.karan_logbuf.sd_count == 0)) {
+		karan_log_init(this_rq);
+	}
+	struct karan_logmsg *msg = karan_nb_msg_alloc(this_rq);
+	msg->nb_msg.this_cpu = this_rq->cpu;
+	
 	unsigned long next_balance = jiffies + HZ;
 	int this_cpu = this_rq->cpu;
 	u64 t0, t1, curr_cost = 0;

@@ -567,13 +567,18 @@ do {									\
 # define u64_u32_load(var)      u64_u32_load_copy(var, var##_copy)
 # define u64_u32_store(var, val) u64_u32_store_copy(var, var##_copy, val)
 
+struct karan_logmsg;
 #ifndef CONFIG_KARAN_LOGBUF_SIZE
 #define CONFIG_KARAN_LOGBUF_SIZE 1024
 #endif
 struct karan_logbuf {
-  void *msgs;
-  uint32_t msg_size;
-  uint32_t position;
+	struct karan_logmsg *msgs[CONFIG_KARAN_LOGBUF_SIZE];
+	void *msg_area;
+	// ^ptrs to messages, which live in big_block_o_memory
+	uint32_t position;
+	
+	uint32_t sd_count;
+	uint32_t msg_size;
 };
 
 /* CFS-related fields in a runqueue */
