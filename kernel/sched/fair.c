@@ -11368,7 +11368,8 @@ static void karan_log_init (struct rq *rq) {
  */
 static int load_balance(int this_cpu, struct rq *this_rq,
 			struct sched_domain *sd, enum cpu_idle_type idle,
-			int *continue_balancing)
+			int *continue_balancing,
+			struct karan_lb_logmsg *msg)
 {
 	int ld_moved, cur_ld_moved, active_balance = 0;
 	struct sched_domain *sd_parent = sd->parent;
@@ -11872,7 +11873,7 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 
 		if (time_after_eq(jiffies, sd->last_balance + interval)) {
 			entry->runs_load_balance = true;
-			if (load_balance(cpu, rq, sd, idle, &continue_balancing)) {
+			if (load_balance(cpu, rq, sd, idle, &continue_balancing, &entry->lb_logmsg)) {
 				/*
 				 * The LBF_DST_PINNED logic could have changed
 				 * env->dst_cpu, so we can't know our idle
@@ -12550,7 +12551,8 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 
 			pulled_task = load_balance(this_cpu, this_rq,
 						   sd, CPU_NEWLY_IDLE,
-						   &continue_balancing);
+						   &continue_balancing,
+						   &entry->lb_logmsg);
 			entry->pulled_task = pulled_task;
 
 			t1 = sched_clock_cpu(this_cpu);
