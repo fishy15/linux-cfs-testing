@@ -1274,6 +1274,12 @@ build_sched_groups(struct sched_domain *sd, int cpu)
 	last->next = first;
 	sd->groups = first;
 
+	struct sched_group *cur = first;
+	do {
+		LOG_TOPOLOGY("sched group for cpu %d: %px", cpu, cur);
+		cur = cur->next;
+	} while (cur != first);
+
 	return 0;
 }
 
