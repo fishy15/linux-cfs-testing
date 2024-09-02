@@ -11349,7 +11349,7 @@ static inline struct karan_logmsg *karan_nb_msg_alloc (struct rq *rq) {
 static void karan_log_init (struct rq *rq) {
 	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
 	
-	int sd_count;
+	int sd_count = 0;
 	struct sched_domain *sd;
 	for_each_domain(rq->cpu, sd) { sd_count++; }
 	logbuf->sd_count = sd_count;
