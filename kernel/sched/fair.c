@@ -11291,6 +11291,10 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 			struct sched_domain *sd, enum cpu_idle_type idle,
 			int *continue_balancing)
 {
+  if (unlikely(this_rq->cfs.karan_logbuf.msgs == NULL)) {
+    this_rq->cfs.karan_logbuf.msgs = kzalloc(sizeof(struct karan_logmsg) * CONFIG_KARAN_LOGBUF_SIZE, GFP_KERNEL);
+  }
+  
 	int ld_moved, cur_ld_moved, active_balance = 0;
 	struct sched_domain *sd_parent = sd->parent;
 	struct sched_group *group;

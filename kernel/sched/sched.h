@@ -572,6 +572,7 @@ do {									\
 #endif
 struct karan_logbuf {
   void *msgs;
+  uint32_t msg_size;
   uint32_t position;
 };
 
