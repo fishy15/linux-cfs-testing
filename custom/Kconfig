@@ -1,0 +1,7 @@
+config KARAN_LOGBUF_SIZE
+	int "log buffer size"
+	default 256
+
+config SHOULD_LOG_TOPOLOGY
+	bool "should log topology"
+	default false
