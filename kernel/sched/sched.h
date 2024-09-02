@@ -567,37 +567,11 @@ do {									\
 # define u64_u32_load(var)      u64_u32_load_copy(var, var##_copy)
 # define u64_u32_store(var, val) u64_u32_store_copy(var, var##_copy, val)
 
-enum karan_codepath {
-  REBALANCE_DOMAINS,
-  NEWIDLE_BALANCE
-};
-
-struct karan_lb_logmsg {
-  char env[104];
-};
-
-struct karan_rd_logmsg {
-  uint32_t x;
-};
-
-struct karan_nb_logmsg {
-  uint64_t y;
-};
-  
-struct karan_logmsg {
-  enum karan_codepath codepath;
-  union {
-    struct karan_rd_logmsg rb_msg;
-    struct karan_nb_logmsg nb_msg;
-  };
-  struct karan_lb_logmsg lb_msg;
-};
-
 #ifndef CONFIG_KARAN_LOGBUF_SIZE
 #define CONFIG_KARAN_LOGBUF_SIZE 1024
 #endif
 struct karan_logbuf {
-  struct karan_logmsg msgs[CONFIG_KARAN_LOGBUF_SIZE];
+  void *msgs;
   uint32_t position;
 };
 

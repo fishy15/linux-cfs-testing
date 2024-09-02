@@ -8794,6 +8794,32 @@ struct lb_env {
 	struct list_head	tasks;
 };
 
+enum karan_codepath {
+  REBALANCE_DOMAINS,
+  NEWIDLE_BALANCE
+};
+
+struct karan_lb_logmsg {
+  struct lb_env env;
+};
+
+struct karan_rd_logmsg {
+  uint32_t x;
+};
+
+struct karan_nb_logmsg {
+  uint64_t y;
+};
+  
+struct karan_logmsg {
+  enum karan_codepath codepath;
+  union {
+    struct karan_rd_logmsg rb_msg;
+    struct karan_nb_logmsg nb_msg;
+  };
+  struct karan_lb_logmsg lb_msg;
+};
+
 /*
  * Is this task likely cache-hot:
  */
@@ -12304,6 +12330,25 @@ static inline void nohz_newidle_balance(struct rq *this_rq) { }
  */
 static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 {
+	// this_cpu
+	// this_rq->misfit_task_load (after update_misfit_status is called)
+	// this_rq->ttwu_pending
+	// this_rq->idle_stamp (may not be necessary)
+	// cpu_active(this_cpu)
+	// sd
+	// this_rq->rd->overload
+	// this_rq->avg_idle
+	// sd->max_newidle_lb_cost
+	// for each sd in this_cpu:
+	//     continue_balancing
+	//     curr_cost
+	//     load_balance and result, pulled_task
+	//     domain_cost
+	//     this_rq->nur_running (might be constant?)
+	//
+	// rest of the info may only be for updates but we can log anyways
+	// this_rq->max_idle_balance_cost
+	// this_rq->cfs.h_nr_running
 	unsigned long next_balance = jiffies + HZ;
 	int this_cpu = this_rq->cpu;
 	u64 t0, t1, curr_cost = 0;
