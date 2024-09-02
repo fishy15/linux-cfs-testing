@@ -11693,6 +11693,16 @@ static inline bool update_newidle_cost(struct sched_domain *sd, u64 cost)
  */
 static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 {
+	// cpu
+	// idle, sched_idle_cpu(cpu)
+	// for each sched domain:
+	//     sd->max_newidle_lb_cost
+	//     continue_balancing at each iteration
+	//     interval
+	//     need_serialize
+	//     if we are after the interval or not (i.e. do we run load_balance)
+	//     new idle, busy after each iteration
+	// other information seems to just be updating state for the next iteration? we can log or ignore
 	int continue_balancing = 1;
 	int cpu = rq->cpu;
 	int busy = idle != CPU_IDLE && !sched_idle_cpu(cpu);
