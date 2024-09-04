@@ -8854,6 +8854,13 @@ struct karan_logmsg {
 	struct karan_lb_logmsg lb_msg;
 };
 
+#define SET_IF_NOT_NULL(var, field, value)	\
+	do {					\
+		if (var != NULL) {		\
+			var->field = (value);	\
+		}				\
+	} while (0);
+
 /*
  * Is this task likely cache-hot:
  */
@@ -11319,9 +11326,7 @@ static int should_we_balance(struct lb_env *env)
 
 static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath codepath) {
 	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
-	if (++logbuf->position == CONFIG_KARAN_LOGBUF_SIZE) {
-		logbuf->position = 0;
-	}
+	if (logbuf->sd_count == 0) { return NULL; }
 
 	void *raw_msg_ptr = (logbuf->msg_area + logbuf->position * logbuf->msg_size);
 	struct karan_logmsg *msg = (struct karan_logmsg *) raw_msg_ptr;
@@ -11333,7 +11338,11 @@ static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath
 	} else {
 		msg->nb_msg.sd_buf = (struct karan_nb_entry_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
 	}
-	
+
+	if (++logbuf->position == CONFIG_KARAN_LOGBUF_SIZE) {
+		logbuf->position = 0;
+	}
+
 	return msg;
 }
 
@@ -11351,6 +11360,7 @@ static void karan_log_init (struct rq *rq) {
 	int sd_count = 0;
 	struct sched_domain *sd;
 	for_each_domain(rq->cpu, sd) { sd_count++; }
+	if (sd_count == 0) { return; }
 	logbuf->sd_count = sd_count;
 	
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_entry_logmsg);
@@ -11815,16 +11825,19 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 	}
 
 	struct karan_logmsg *msg = karan_rd_msg_alloc(rq);
-	struct karan_rd_logmsg *rd_msg = &msg->rd_msg;
+	struct karan_rd_logmsg *rd_msg = NULL;
+	if (msg != NULL) {
+		rd_msg = &msg->rd_msg;
+	}
 	
 	int continue_balancing = 1;
 
 	int cpu = rq->cpu;
-	rd_msg->cpu = cpu;
+	SET_IF_NOT_NULL(rd_msg, cpu, cpu);
 
 	int busy = idle != CPU_IDLE && !sched_idle_cpu(cpu);
-	rd_msg->idle = idle;
-	rd_msg->sched_idle_cpu = sched_idle_cpu(cpu);
+	SET_IF_NOT_NULL(rd_msg, idle, idle);
+	SET_IF_NOT_NULL(rd_msg, sched_idle_cpu, sched_idle_cpu(cpu));
 
 	unsigned long interval;
 	struct sched_domain *sd;
@@ -11834,7 +11847,10 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 	int need_serialize, need_decay = 0;
 	u64 max_cost = 0;
 
-	struct karan_rd_entry_logmsg *entry = rd_msg->sd_buf;
+	struct karan_rd_entry_logmsg *entry = NULL;
+       	if (rd_msg != NULL) {
+		entry = rd_msg->sd_buf;
+	}
 
 	rcu_read_lock();
 	for_each_domain(cpu, sd) {
@@ -11845,14 +11861,14 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 		need_decay = update_newidle_cost(sd, 0);
 		max_cost += sd->max_newidle_lb_cost;
 
-		entry->max_newidle_lb_cost = sd->max_newidle_lb_cost;
+		SET_IF_NOT_NULL(entry, max_newidle_lb_cost, sd->max_newidle_lb_cost);
 
 		/*
 		 * Stop the load balance at this level. There is another
 		 * CPU in our sched group which is doing load balancing more
 		 * actively.
 		 */
-		entry->continue_balancing = continue_balancing;
+		SET_IF_NOT_NULL(entry, continue_balancing, continue_balancing);
 		if (!continue_balancing) {
 			if (need_decay) {
 				entry++;
@@ -11862,18 +11878,24 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 		}
 
 		interval = get_sd_balance_interval(sd, busy);
-		entry->interval = interval;
+		SET_IF_NOT_NULL(entry, interval, interval);
 
 		need_serialize = sd->flags & SD_SERIALIZE;
-		entry->need_serialize = need_serialize;
+		SET_IF_NOT_NULL(entry, need_serialize, need_serialize);
 		if (need_serialize) {
 			if (!spin_trylock(&balancing))
 				goto out;
 		}
 
 		if (time_after_eq(jiffies, sd->last_balance + interval)) {
-			entry->runs_load_balance = true;
-			if (load_balance(cpu, rq, sd, idle, &continue_balancing, &entry->lb_logmsg)) {
+			SET_IF_NOT_NULL(entry, runs_load_balance, true);
+
+			struct karan_lb_logmsg *lb_logmsg = NULL;
+			if (entry != NULL) {
+				lb_logmsg = &entry->lb_logmsg;
+			}
+
+			if (load_balance(cpu, rq, sd, idle, &continue_balancing, lb_logmsg)) {
 				/*
 				 * The LBF_DST_PINNED logic could have changed
 				 * env->dst_cpu, so we can't know our idle
@@ -11881,13 +11903,13 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 				 */
 				idle = idle_cpu(cpu) ? CPU_IDLE : CPU_NOT_IDLE;
 				busy = idle != CPU_IDLE && !sched_idle_cpu(cpu);
-				entry->new_idle = idle;
-				entry->new_busy = busy;
+				SET_IF_NOT_NULL(entry, new_idle, idle);
+				SET_IF_NOT_NULL(entry, new_busy, busy);
 			}
 			sd->last_balance = jiffies;
 			interval = get_sd_balance_interval(sd, busy);
 		} else {
-			entry->runs_load_balance = false;
+			SET_IF_NOT_NULL(entry, runs_load_balance, false);
 		}
 
 		if (need_serialize)
@@ -11898,7 +11920,9 @@ out:
 			update_next_balance = 1;
 		}
 
-		entry++;
+		if (entry != NULL) {
+			entry++;
+		}
 	}
 	if (need_decay) {
 		/*
@@ -12430,6 +12454,12 @@ static inline bool nohz_idle_balance(struct rq *this_rq, enum cpu_idle_type idle
 static inline void nohz_newidle_balance(struct rq *this_rq) { }
 #endif /* CONFIG_NO_HZ_COMMON */
 
+static noinline int karan_newidle_balance_ret(struct karan_logbuf *buf) {
+	volatile int hi = buf ? 0x581294 : 0x238501;
+	hi += 1;
+	return hi ^ hi;
+}
+
 /*
  * newidle_balance is called by schedule() if this_cpu is about to become
  * idle. Attempts to pull tasks from other CPUs.
@@ -12466,41 +12496,44 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 	}
 
 	struct karan_logmsg *msg = karan_nb_msg_alloc(this_rq);
-	struct karan_nb_logmsg *nb_msg = &msg->nb_msg;
+    struct karan_nb_logmsg *nb_msg = NULL;
+	if (msg != NULL) {
+		nb_msg = &msg->nb_msg;
+	}
 
 	unsigned long next_balance = jiffies + HZ;
 
 	int this_cpu = this_rq->cpu;
-	nb_msg->this_cpu = this_rq->cpu;
+	SET_IF_NOT_NULL(nb_msg, this_cpu, this_rq->cpu);
 	
 	u64 t0, t1, curr_cost = 0;
 	struct sched_domain *sd;
 	int pulled_task = 0;
 
 	update_misfit_status(NULL, this_rq);
-	nb_msg->misfit_task_load = this_rq->misfit_task_load;
+	SET_IF_NOT_NULL(nb_msg, misfit_task_load, this_rq->misfit_task_load);
 
 	/*
 	 * There is a task waiting to run. No need to search for one.
 	 * Return 0; the task will be enqueued when switching to idle.
 	 */
-	nb_msg->ttwu_pending = this_rq->ttwu_pending;
+	SET_IF_NOT_NULL(nb_msg, ttwu_pending, this_rq->ttwu_pending);
 	if (this_rq->ttwu_pending)
-		return 0;
+		return karan_newidle_balance_ret(&(this_rq->cfs.karan_logbuf));
 
 	/*
 	 * We must set idle_stamp _before_ calling idle_balance(), such that we
 	 * measure the duration of idle_balance() as idle time.
 	 */
 	this_rq->idle_stamp = rq_clock(this_rq);
-	nb_msg->idle_stamp = this_rq->idle_stamp;
+	SET_IF_NOT_NULL(nb_msg, idle_stamp, this_rq->idle_stamp);
 
 	/*
 	 * Do not pull tasks towards !active CPUs...
 	 */
-	nb_msg->cpu_active = cpu_active(this_cpu);
+	SET_IF_NOT_NULL(nb_msg, cpu_active, cpu_active(this_cpu));
 	if (!cpu_active(this_cpu))
-		return 0;
+		return karan_newidle_balance_ret(&(this_rq->cfs.karan_logbuf));
 
 	/*
 	 * This is OK, because current is on_cpu, which avoids it being picked
@@ -12512,11 +12545,11 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 
 	rcu_read_lock();
 	sd = rcu_dereference_check_sched_domain(this_rq->sd);
-	nb_msg->sd = sd;
+	SET_IF_NOT_NULL(nb_msg, sd, sd);
 
-	nb_msg->rd_overload = READ_ONCE(this_rq->rd->overload);
-	nb_msg->avg_idle = this_rq->avg_idle;
-	nb_msg->max_newidle_lb_cost = sd->max_newidle_lb_cost;
+	SET_IF_NOT_NULL(nb_msg, rd_overload, READ_ONCE(this_rq->rd->overload));
+	SET_IF_NOT_NULL(nb_msg, avg_idle, this_rq->avg_idle);
+	SET_IF_NOT_NULL(nb_msg, max_newidle_lb_cost, sd->max_newidle_lb_cost);
 	if (!READ_ONCE(this_rq->rd->overload) ||
 	    (sd && this_rq->avg_idle < sd->max_newidle_lb_cost)) {
 
@@ -12535,53 +12568,64 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 
 	rcu_read_lock();
 
-	struct karan_nb_entry_logmsg *entry = nb_msg->sd_buf;
+	struct karan_nb_entry_logmsg *entry = NULL;
+	if (nb_msg != NULL) {
+		entry = nb_msg->sd_buf;
+	}
+
 	for_each_domain(this_cpu, sd) {
 		int continue_balancing = 1;
 		u64 domain_cost;
 
 		update_next_balance(sd, &next_balance);
 
-		entry->curr_cost = curr_cost;
+		SET_IF_NOT_NULL(entry, curr_cost, curr_cost);
 		if (this_rq->avg_idle < curr_cost + sd->max_newidle_lb_cost)
 			break;
 
 		if (sd->flags & SD_BALANCE_NEWIDLE) {
-			entry->runs_load_balance = true;
+			SET_IF_NOT_NULL(entry, runs_load_balance, true);
+
+			struct karan_lb_logmsg *lb_logmsg = NULL;
+			if (entry != NULL) {
+				lb_logmsg = &entry->lb_logmsg;
+			}
 
 			pulled_task = load_balance(this_cpu, this_rq,
 						   sd, CPU_NEWLY_IDLE,
 						   &continue_balancing,
-						   &entry->lb_logmsg);
-			entry->pulled_task = pulled_task;
+						   lb_logmsg);
+			SET_IF_NOT_NULL(entry, pulled_task, pulled_task);
 
 			t1 = sched_clock_cpu(this_cpu);
 			domain_cost = t1 - t0;
-			entry->domain_cost = domain_cost;
+			SET_IF_NOT_NULL(entry, domain_cost, domain_cost);
 			update_newidle_cost(sd, domain_cost);
 
 			curr_cost += domain_cost;
 			t0 = t1;
 		} else {
-			entry->runs_load_balance = false;
+			SET_IF_NOT_NULL(entry, runs_load_balance, false);
 		}
 
 		/*
 		 * Stop searching for tasks to pull if there are
 		 * now runnable tasks on this rq.
 		 */
-		entry->nr_running = this_rq->nr_running;
+		SET_IF_NOT_NULL(entry, nr_running, this_rq->nr_running);
 		if (pulled_task || this_rq->nr_running > 0 ||
 		    this_rq->ttwu_pending)
 			break;
 
-		entry++;
+		if (entry != NULL) {
+			entry++;
+		}
 	}
 	rcu_read_unlock();
 
 	raw_spin_rq_lock(this_rq);
 
-	nb_msg->max_idle_balance_cost = this_rq->max_idle_balance_cost;
+	SET_IF_NOT_NULL(nb_msg, max_idle_balance_cost, this_rq->max_idle_balance_cost);
 	if (curr_cost > this_rq->max_idle_balance_cost)
 		this_rq->max_idle_balance_cost = curr_cost;
 
@@ -12590,7 +12634,7 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 	 * have been enqueued in the meantime. Since we're not going idle,
 	 * pretend we pulled a task.
 	 */
-	nb_msg->h_nr_running = this_rq->cfs.h_nr_running;
+	SET_IF_NOT_NULL(nb_msg, h_nr_running, this_rq->cfs.h_nr_running);
 	if (this_rq->cfs.h_nr_running && !pulled_task)
 		pulled_task = 1;
 
