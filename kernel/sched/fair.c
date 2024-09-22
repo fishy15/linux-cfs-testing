@@ -8803,6 +8803,7 @@ struct karan_lb_logmsg {
  	struct lb_env env;
 };
 
+// values for a specific sched_domain iteration
 struct karan_rd_entry_logmsg {
 	u64 max_newidle_lb_cost;
 	int continue_balancing;
@@ -8821,6 +8822,7 @@ struct karan_rd_logmsg {
   	struct karan_rd_entry_logmsg *sd_buf;
 };
 
+// values for a specific sched_domain iteration
 struct karan_nb_entry_logmsg {
 	u64 curr_cost;
 	bool runs_load_balance;
@@ -11328,6 +11330,10 @@ static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath
 	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
 	if (logbuf->sd_count == 0) { return NULL; }
 
+	if (++logbuf->position == CONFIG_KARAN_LOGBUF_SIZE) {
+		logbuf->position = 0;
+	}
+
 	void *raw_msg_ptr = (logbuf->msg_area + logbuf->position * logbuf->msg_size);
 	struct karan_logmsg *msg = (struct karan_logmsg *) raw_msg_ptr;
 	logbuf->msgs[logbuf->position] = msg;
@@ -11337,10 +11343,6 @@ static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath
 		msg->rd_msg.sd_buf = (struct karan_rd_entry_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
 	} else {
 		msg->nb_msg.sd_buf = (struct karan_nb_entry_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
-	}
-
-	if (++logbuf->position == CONFIG_KARAN_LOGBUF_SIZE) {
-		logbuf->position = 0;
 	}
 
 	return msg;
@@ -11355,12 +11357,15 @@ static inline struct karan_logmsg *karan_nb_msg_alloc (struct rq *rq) {
 }
 
 static void karan_log_init (struct rq *rq) {
+	LOG_TOPOLOGY("running karan log init\n");
+
 	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
 	
 	int sd_count = 0;
 	struct sched_domain *sd;
 	for_each_domain(rq->cpu, sd) { sd_count++; }
-	if (sd_count == 0) { return; }
+	if (sd_count == 0) { return; } else { goto ready; }
+ready:
 	logbuf->sd_count = sd_count;
 	
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_entry_logmsg);
@@ -11370,6 +11375,7 @@ static void karan_log_init (struct rq *rq) {
 	logbuf->msg_size = msg_size;
 	
 	logbuf->msg_area = kzalloc(msg_size * CONFIG_KARAN_LOGBUF_SIZE, GFP_KERNEL);
+	logbuf->position = CONFIG_KARAN_LOGBUF_SIZE - 1; // will be incremented on first alloc
 }
 
 /*
@@ -12496,7 +12502,7 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 	}
 
 	struct karan_logmsg *msg = karan_nb_msg_alloc(this_rq);
-    struct karan_nb_logmsg *nb_msg = NULL;
+	struct karan_nb_logmsg *nb_msg = NULL;
 	if (msg != NULL) {
 		nb_msg = &msg->nb_msg;
 	}
