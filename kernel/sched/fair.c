@@ -8800,6 +8800,7 @@ enum karan_codepath {
 };
 
 struct karan_lb_logmsg {
+	bool runs_load_balance;
  	struct lb_env env;
 };
 
@@ -8809,7 +8810,6 @@ struct karan_rd_entry_logmsg {
 	int continue_balancing;
 	unsigned long interval;
 	int need_serialize;
-	bool runs_load_balance;
 	struct karan_lb_logmsg lb_logmsg;
 	enum cpu_idle_type new_idle;
 	int new_busy;
@@ -11648,6 +11648,7 @@ out_one_pinned:
 	    sd->balance_interval < sd->max_interval)
 		sd->balance_interval *= 2;
 out:
+	memcpy(&msg->env, &env, sizeof env);
 	return ld_moved;
 }
 
@@ -11893,13 +11894,13 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 				goto out;
 		}
 
-		if (time_after_eq(jiffies, sd->last_balance + interval)) {
-			SET_IF_NOT_NULL(entry, runs_load_balance, true);
+		struct karan_lb_logmsg *lb_logmsg = NULL;
+		if (entry != NULL) {
+			lb_logmsg = &entry->lb_logmsg;
+		}
 
-			struct karan_lb_logmsg *lb_logmsg = NULL;
-			if (entry != NULL) {
-				lb_logmsg = &entry->lb_logmsg;
-			}
+		if (time_after_eq(jiffies, sd->last_balance + interval)) {
+			SET_IF_NOT_NULL(lb_logmsg, runs_load_balance, true);
 
 			if (load_balance(cpu, rq, sd, idle, &continue_balancing, lb_logmsg)) {
 				/*
@@ -11915,7 +11916,7 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 			sd->last_balance = jiffies;
 			interval = get_sd_balance_interval(sd, busy);
 		} else {
-			SET_IF_NOT_NULL(entry, runs_load_balance, false);
+			SET_IF_NOT_NULL(lb_logmsg, runs_load_balance, false);
 		}
 
 		if (need_serialize)

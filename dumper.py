@@ -36,16 +36,19 @@ class ReadyQueue:
     pass
 
 def read_ready_queue(rq):
-    print(read_value(rq))
+    print(rq)
     return ReadyQueue()
 
 @dataclass
 class CpuMask:
-    pass
+    mask: str
 
 def read_cpumask(cpumask):
-    print(cpumask)
-    return CpuMask()
+    output = exec_capture_output(f'p/t {cpumask}')
+    bits = output.split()[4][1:-2]
+    while len(bits) < CORES:
+        bits = '0' + bits
+    return CpuMask(bits)
 
 @dataclass
 class FBQType(Enum):
@@ -57,7 +60,6 @@ def read_fbq_type(fbq_type):
     fbq_type_value = read_value(fbq_type)
     for option in FBQType:
         if option.name == fbq_type_value:
-            print('FBQ:', option)
             return option
     raise Exception(f'No matching fbq type for {fbq_type_value}')
 
@@ -103,11 +105,11 @@ def read_lb_env(lb_env) -> LBEnv:
     src_cpu = read_int(f'{lb_env}.src_cpu')
     dst_cpu = read_int(f'{lb_env}.dst_cpu')
     dst_rq = read_if_not_null(f'{lb_env}.dst_rq', read_ready_queue)
-    dst_grpmask = read_cpumask(f'(*{lb_env}.dst_grpmask)')
+    dst_grpmask = read_if_not_null(f'{lb_env}.dst_grpmask', read_cpumask)
     new_dst_cpu = read_int(f'{lb_env}.new_dst_cpu')
     idle = read_cpu_idle_type(f'{lb_env}.idle')
     imbalance = read_int(f'{lb_env}.imbalance')
-    cpus = read_cpumask(f'(*{lb_env}.cpus)')
+    cpus = read_if_not_null(f'{lb_env}.cpus', read_cpumask)
     flags = read_int(f'{lb_env}.flags')
     loop = read_int(f'{lb_env}.loop')
     loop_break = read_int(f'{lb_env}.loop_break')
@@ -120,11 +122,16 @@ def read_lb_env(lb_env) -> LBEnv:
 
 @dataclass
 class LBLogMsg:
+    runs_load_balance: bool
     lb_env: LBEnv
 
 def read_lb_logmsg(lb_logmsg) -> LBLogMsg:
-    lb_env = read_lb_env(f'{lb_logmsg}.env')
-    return LBLogMsg(lb_env)
+    runs_load_balance = read_bool(f'{lb_logmsg}.runs_load_balance')
+    if runs_load_balance:
+        lb_env = read_lb_env(f'{lb_logmsg}.env')
+    else:
+        lb_env = None
+    return LBLogMsg(runs_load_balance, lb_env)
 
 
 @dataclass
@@ -133,7 +140,6 @@ class RDEntryLogMsg:
     continue_balancing: int
     interval: int
     need_serialize: int
-    runs_load_balance: int
     lb_logmsg: LBLogMsg
     new_idle: CpuIdleType
     new_busy: int
@@ -143,12 +149,11 @@ def read_rebalance_domains_entry(entry) -> RDEntryLogMsg:
     continue_balancing = read_int(f'{entry}.continue_balancing')
     interval = read_int(f'{entry}.interval')
     need_serialize = read_int(f'{entry}.need_serialize')
-    runs_load_balance = bool(read_value(f'{entry}.interval'))
     lb_logmsg = read_lb_logmsg(f'{entry}.lb_logmsg')
     new_idle = read_cpu_idle_type(f'{entry}.new_idle')
     new_busy = read_int(f'{entry}.new_busy')
-    return RDEntryLogMsg(max_newidle_lb_cost, continue_balancing, interval, need_serialize, runs_load_balance,
-            lb_logmsg, new_idle, new_busy)
+    return RDEntryLogMsg(max_newidle_lb_cost, continue_balancing, interval, need_serialize, lb_logmsg, 
+            new_idle, new_busy)
 
 
 @dataclass
@@ -222,6 +227,10 @@ def read_value(val):
 
 def read_int(val):
     return int(read_value(val))
+
+def read_bool(val):
+    # covers int and bool possibilities
+    return read_value(val) not in ['false', 'False', '0']
 
 
 def read_if_not_null(ptr, f):
