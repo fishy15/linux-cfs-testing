@@ -1,6 +1,7 @@
 import gdb
+import json
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from typing import List, Optional
 
@@ -170,12 +171,21 @@ def read_rebalance_domains(rd_msg) -> RDLogMsg:
     sd_buf = [read_rebalance_domains_entry(f'{rd_msg}.sd_buf[0]')]  # TODO: read more than one entry
     return RDLogMsg(cpu, idle, sched_idle_cpu, sd_buf)
 
+class Encoder(json.JSONEncoder):
+    def default(self, obj):
+        print(obj)
+        if isinstance(obj, Enum):
+            print('case 1')
+            return obj.name
+        elif is_dataclass(obj):
+            return asdict(obj)
+        print(type(obj))
+        return super().default(obj)
 
 ### Actual code ####
 
 ## Read in some information about cores based on the topology
 
-print('TOPOLOGY:', TOPOLOGY)
 if not TOPOLOGY:
     CORES=2
 else:
@@ -185,7 +195,26 @@ else:
     else:
         CORES=int(TOPOLOGY)
 
+## setup file
+
+try:
+    file = open(FILE, 'w')
+except NameError:
+    FILE = None
+    file = None
+total_data = []
+
+## set up iteration count
+try:
+    ITERS = int(ITERS)
+except:
+    ITERS = None
+
+# print config to user
+print('TOPOLOGY:', TOPOLOGY)
 print('CORES:', CORES)
+print('FILE:', FILE)
+print('ITERS:', ITERS)
 
 ## Command to interact with GDB
 
@@ -212,9 +241,12 @@ def get_logmsg_info(ptr):
     print('CODEPATH:', codepath)
     if codepath == 'REBALANCE_DOMAINS':
         data = read_rebalance_domains(f'{ptr}->rd_msg')
-        print(data)
     else:
-        pass
+        data = None
+
+    if data is not None:
+        print(data)
+        total_data.append(data)
 
 def read_value(val):
     tokens = exec_capture_output(f'p {val}').split()
@@ -319,5 +351,13 @@ exec('b rebalance_domains:out')
 exec('b newidle_balance:out')
 exec('b karan_newidle_balance_ret')
 
-# go until the first example
 exec('c')
+
+# go until the first example
+if ITERS is not None:
+    for i in range(ITERS):
+        print('ON ITER', i)
+        exec('c')
+    json.dump(total_data, file, cls=Encoder)
+    print(json.dumps(total_data, cls=Encoder))
+    file.close()
