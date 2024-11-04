@@ -8799,9 +8799,24 @@ enum karan_codepath {
 	NEWIDLE_BALANCE
 };
 
+struct karan_swb_logmsg {
+	struct cpumask *swb_cpus;
+	// int dst_cpu;
+	// int cpus;
+	// int idle;
+	int dst_nr_running;
+	int dst_ttwu_pending;
+	struct cpumask *group_balance_mask_sg;
+	// these need to be per-core information
+	bool idle_cpu;
+	bool is_core_idle_cpu;
+	int group_balance_cpu_sg;
+};
+
 struct karan_lb_logmsg {
 	bool runs_load_balance;
- 	struct lb_env env;
+	struct lb_env env;
+	struct karan_swb_logmsg swb_logmsg;
 };
 
 // values for a specific sched_domain iteration
@@ -8819,7 +8834,7 @@ struct karan_rd_logmsg {
 	int cpu;
 	enum cpu_idle_type idle;
 	int sched_idle_cpu;
-  	struct karan_rd_entry_logmsg *sd_buf;
+	struct karan_rd_entry_logmsg *sd_buf;
 };
 
 // values for a specific sched_domain iteration
@@ -8846,7 +8861,7 @@ struct karan_nb_logmsg {
 	u64 max_idle_balance_cost;
 	unsigned int h_nr_running;
 };
-  
+
 struct karan_logmsg {
 	enum karan_codepath codepath;
 	union {
@@ -11260,11 +11275,29 @@ static int need_active_balance(struct lb_env *env)
 
 static int active_load_balance_cpu_stop(void *data);
 
-static int should_we_balance(struct lb_env *env)
+static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_logmsg)
 {
+	/*
+	 * Things looked at in this function:
+	 * swb_cpus
+	 * env->dst_cpu
+	 * env->cpus
+	 * env->idle
+	 * env->dst_rq->nr_running
+	 * env->dst_rq->ttwu_pending
+	 * group_balance_mask(sg)
+	 * env->cpus
+	 * env->sd->flags & SD_SHARE_CPUCAPACITY
+	 * is_core_idle(cpu)
+	 * maybe store the resulting value of idle_smt?
+	 * env->dst_cpu
+	 * group_balance_cpu(sg), sg is env->sd->groups
+	 */
 	struct cpumask *swb_cpus = this_cpu_cpumask_var_ptr(should_we_balance_tmpmask);
 	struct sched_group *sg = env->sd->groups;
 	int cpu, idle_smt = -1;
+
+	SET_IF_NOT_NULL(swb_logmsg, swb_cpus, swb_cpus);
 
 	/*
 	 * Ensure the balancing environment is consistent; can happen
@@ -11281,12 +11314,19 @@ static int should_we_balance(struct lb_env *env)
 	 * to optimize wakeup latency.
 	 */
 	if (env->idle == CPU_NEWLY_IDLE) {
+		SET_IF_NOT_NULL(swb_logmsg, dst_nr_running, env->dst_rq->nr_running);
+		SET_IF_NOT_NULL(swb_logmsg, dst_ttwu_pending, env->dst_rq->ttwu_pending);
 		if (env->dst_rq->nr_running > 0 || env->dst_rq->ttwu_pending)
 			return 0;
 		return 1;
 	}
 
+
 	cpumask_copy(swb_cpus, group_balance_mask(sg));
+	if (swb_logmsg != NULL) {
+		cpumask_copy(swb_logmsg->swb_cpus, swb_cpus);
+	}
+
 	/* Try to find first idle CPU */
 	for_each_cpu_and(cpu, swb_cpus, env->cpus) {
 		if (!idle_cpu(cpu))
@@ -11323,6 +11363,7 @@ static int should_we_balance(struct lb_env *env)
 		return idle_smt == env->dst_cpu;
 
 	/* Are we the first CPU of this group ? */
+	SET_IF_NOT_NULL(swb_logmsg, group_balance_cpu_sg, group_balance_cpu(sg));
 	return group_balance_cpu(sg) == env->dst_cpu;
 }
 
@@ -11360,20 +11401,20 @@ static void karan_log_init (struct rq *rq) {
 	LOG_TOPOLOGY("running karan log init\n");
 
 	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
-	
+
 	int sd_count = 0;
 	struct sched_domain *sd;
 	for_each_domain(rq->cpu, sd) { sd_count++; }
 	if (sd_count == 0) { return; } else { goto ready; }
 ready:
 	logbuf->sd_count = sd_count;
-	
+
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_entry_logmsg);
 	int nb_msg_size = sd_count * sizeof(struct karan_nb_entry_logmsg);
 	int max_submsg_size = rd_msg_size > nb_msg_size ? rd_msg_size : nb_msg_size;
 	int msg_size = sizeof(struct karan_logmsg) + max_submsg_size;
 	logbuf->msg_size = msg_size;
-	
+
 	logbuf->msg_area = kzalloc(msg_size * CONFIG_KARAN_LOGBUF_SIZE, GFP_KERNEL);
 	logbuf->position = CONFIG_KARAN_LOGBUF_SIZE - 1; // will be incremented on first alloc
 }
@@ -11410,7 +11451,7 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 	schedstat_inc(sd->lb_count[idle]);
 
 redo:
-	if (!should_we_balance(&env)) {
+	if (!should_we_balance(&env, &msg->swb_logmsg)) {
 		*continue_balancing = 0;
 		goto out_balanced;
 	}
@@ -11836,7 +11877,7 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 	if (msg != NULL) {
 		rd_msg = &msg->rd_msg;
 	}
-	
+
 	int continue_balancing = 1;
 
 	int cpu = rq->cpu;
@@ -12497,7 +12538,7 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 	// rest of the info may only be for updates but we can log anyways
 	// this_rq->max_idle_balance_cost
 	// this_rq->cfs.h_nr_running
-	
+
 	if (unlikely(this_rq->cfs.karan_logbuf.sd_count == 0)) {
 		karan_log_init(this_rq);
 	}
@@ -12512,7 +12553,7 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 
 	int this_cpu = this_rq->cpu;
 	SET_IF_NOT_NULL(nb_msg, this_cpu, this_rq->cpu);
-	
+
 	u64 t0, t1, curr_cost = 0;
 	struct sched_domain *sd;
 	int pulled_task = 0;

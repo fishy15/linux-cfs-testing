@@ -26,7 +26,7 @@ else
     topology="-smp cpus=$CORES"
 fi
 
-echo "$1" | grep "\.qcow2$" > /dev/null
+echo "$1" | grep -e "\.qcow2$" -e "\.img" > /dev/null
 if [ "$?" = "0" ]; then
     drive="/dev/sda1"
 else
@@ -35,8 +35,8 @@ fi
 
 qemu-system-x86_64 \
     -nographic -m 4G $@ \
-    -netdev user,id=net0,hostfwd=tcp::2222-:22 \
     -append "root=$drive rw console=tty0 console=ttyS0,115200n8 sched_verbose" \
     -kernel kbuild/arch/x86/boot/bzImage \
-	-accel tcg,thread=single \
+    -accel tcg,thread=single \
     $topology
+    # -netdev user,id=net0,hostfwd=tcp::2222-:22 \
