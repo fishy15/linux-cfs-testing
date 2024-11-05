@@ -8856,8 +8856,8 @@ struct karan_swb_logmsg {
 struct karan_fbg_logmsg {
 	unsigned long sd_total_load;
 	unsigned long sd_total_capacity;
-	unsigned long avg_load;
-	unsigned int prefer_sibling;
+	unsigned long sd_avg_load;
+	unsigned int sd_prefer_sibling;
 	struct sg_lb_stats busiest_stat;
 	struct sg_lb_stats local_stat;
 	bool sched_energy_enabled;
@@ -8865,9 +8865,8 @@ struct karan_fbg_logmsg {
 	bool rd_overutilized;
 	int busiest_cores;
 	int local_cores;
-
-	int ret_migration_type;
-	int ret_imbalance;
+	// int ret_migration_type;
+	// int ret_imbalance;
 };
 
 struct karan_lb_logmsg {
@@ -10998,20 +10997,21 @@ static struct sched_group *find_busiest_group(struct lb_env *env, struct karan_f
 	update_sd_lb_stats(env, &sds);
 
 	// copy values into logmsg
-	SET_IF_NOT_NULL(msg, sd_total_load, sds->total_load);
-	SET_IF_NOT_NULL(msg, sd_total_capacity, sds->total_capacity);
-	SET_IF_NOT_NULL(msg, sd_avg_load, sds->avg_load);
-	SET_IF_NOT_NULL(msg, sd_total_load, sds->total_load);
+	SET_IF_NOT_NULL(msg, sd_total_load, sds.total_load);
+	SET_IF_NOT_NULL(msg, sd_total_capacity, sds.total_capacity);
+	SET_IF_NOT_NULL(msg, sd_avg_load, sds.avg_load);
+	SET_IF_NOT_NULL(msg, sd_prefer_sibling, sds.prefer_sibling);
 	if (msg != NULL) {
-		memcpy(&msg->busiest_stat, sds->busiest_stat, sizeof(*sds->busiest_stat));
-		memcpy(&msg->local_stat, sds->local_stat, sizeof(*sds->local_stat));
+		memcpy(&msg->busiest_stat, &sds.busiest_stat, sizeof sds.busiest_stat);
+		memcpy(&msg->local_stat, &sds.local_stat, sizeof sds.local_stat);
 	}
-	SET_IF_NOT_NULL(msg, busiest_cores, sds->busiest->cores);
-	SET_IF_NOT_NULL(msg, local_cores, sds->local->cores);
+	SET_IF_NOT_NULL(msg, local_cores, sds.local->cores);
 
 	/* There is no busy sibling group to pull tasks from */
 	if (!sds.busiest)
 		goto out_balanced;
+
+	SET_IF_NOT_NULL(msg, busiest_cores, sds.busiest->cores);
 
 	busiest = &sds.busiest_stat;
 
