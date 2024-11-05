@@ -23,5 +23,5 @@ else
 fi
 
 if [ -z $ATTACH ]; then
-    killall qemu-system-x86_64 --quiet
+    #killall qemu-system-x86_64 --quiet
 fi

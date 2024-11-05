@@ -11365,9 +11365,11 @@ static void karan_log_init (struct rq *rq) {
 	struct sched_domain *sd;
 	for_each_domain(rq->cpu, sd) { sd_count++; }
 	if (sd_count == 0) { return; } else { goto ready; }
+        
 ready:
 	logbuf->sd_count = sd_count;
-	
+        logbuf->cpu_count = nr_cpus;
+        
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_entry_logmsg);
 	int nb_msg_size = sd_count * sizeof(struct karan_nb_entry_logmsg);
 	int max_submsg_size = rd_msg_size > nb_msg_size ? rd_msg_size : nb_msg_size;

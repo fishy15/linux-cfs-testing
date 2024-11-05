@@ -578,6 +578,7 @@ struct karan_logbuf {
 	uint32_t position;
 	
 	uint32_t sd_count;
+        uint32_t cpu_count; // should mirror nr_cpus
 	uint32_t msg_size;
 };
 
