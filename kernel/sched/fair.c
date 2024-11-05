@@ -8869,15 +8869,41 @@ struct karan_fbg_logmsg {
 	// int ret_imbalance;
 };
 
+struct karan_fbq_per_cpu_logmsg {
+        int cpu_id;
+        unsigned int rq_nr_running;
+        unsigned int rq_nr_numa_running;
+        unsigned int rq_nr_preferred_running;
+        unsigned int rq_cfs_h_nr_running;
+        unsigned long capacity;
+        bool is_core_idle;
+        int asch_asym_cpu_priority;
+        unsigned long cpu_load;
+        unsigned long cpu_util_cfs_boost;
+        int rq_cpu_capacity;
+        int sd_imbalance_pct;
+        int arch_scale_cpu_capacity;
+};
+
+struct karan_fbq_logmsg {
+        unsigned long capacity_dst_cpu;
+        bool sched_smt_active;
+        int arch_asym_cpu_priority_dst_cpu;
+        
+        struct karan_fbq_per_cpu_logmsg *per_cpu_msgs;
+        struct karan_fbq_per_cpu_logmsg *next_per_cpu_msg_slot;
+};
+
 struct karan_lb_logmsg {
 	bool runs_load_balance;
 	struct lb_env env;
 	struct karan_swb_logmsg swb_logmsg;
 	struct karan_fbg_logmsg fbg_logmsg;
+        struct karan_fbq_logmsg fbq_logmsg;
 };
 
 // values for a specific sched_domain iteration
-struct karan_rd_entry_logmsg {
+struct karan_rd_per_sd_logmsg {
 	u64 max_newidle_lb_cost;
 	int continue_balancing;
 	unsigned long interval;
@@ -8891,11 +8917,11 @@ struct karan_rd_logmsg {
 	int cpu;
 	enum cpu_idle_type idle;
 	int sched_idle_cpu;
-	struct karan_rd_entry_logmsg *sd_buf;
+	struct karan_rd_per_sd_logmsg *sd_buf;
 };
 
 // values for a specific sched_domain iteration
-struct karan_nb_entry_logmsg {
+struct karan_nb_per_sd_logmsg {
 	u64 curr_cost;
 	bool runs_load_balance;
 	struct karan_lb_logmsg lb_logmsg;
@@ -8914,7 +8940,7 @@ struct karan_nb_logmsg {
 	int rd_overload;
 	u64 avg_idle;
 	u64 max_newidle_lb_cost;
-	struct karan_nb_entry_logmsg *sd_buf;
+	struct karan_nb_per_sd_logmsg *sd_buf;
 	u64 max_idle_balance_cost;
 	unsigned int h_nr_running;
 };
@@ -11461,9 +11487,19 @@ static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath
 
 	msg->codepath = codepath;
 	if (codepath == REBALANCE_DOMAINS) {
-		msg->rd_msg.sd_buf = (struct karan_rd_entry_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
+		msg->rd_msg.sd_buf = (struct karan_rd_per_sd_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
+                void *per_cpu_msg_area = ((void *) msg->rd_msg.sd_buf) + (logbuf->sd_count * sizeof(struct karan_rd_per_sd_logmsg));
+                for (int i = 0; i < logbuf->sd_count; i++) {
+                        struct karan_rd_per_sd_logmsg *sd_logmsg = msg->rd_msg.sd_buf + i;
+                        sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs = (struct karan_fbq_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg));
+                }
 	} else {
-		msg->nb_msg.sd_buf = (struct karan_nb_entry_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
+		msg->nb_msg.sd_buf = (struct karan_nb_per_sd_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
+                void *per_cpu_msg_area = ((void *) msg->nb_msg.sd_buf) + (logbuf->sd_count * sizeof(struct karan_nb_per_sd_logmsg));
+                for (int i = 0; i < logbuf->sd_count; i++) {
+                        struct karan_nb_per_sd_logmsg *sd_logmsg = msg->nb_msg.sd_buf + i;
+                        sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs = (struct karan_fbq_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg));
+                }
 	}
 
 	return msg;
@@ -11489,12 +11525,13 @@ static void karan_log_init (struct rq *rq) {
         
 ready:
 	logbuf->sd_count = sd_count;
-        logbuf->cpu_count = nr_cpus;
+        logbuf->cpu_count = nr_cpu_ids;
 
-	int rd_msg_size = sd_count * sizeof(struct karan_rd_entry_logmsg);
-	int nb_msg_size = sd_count * sizeof(struct karan_nb_entry_logmsg);
+        int space_for_per_cpu_msgs = sd_count * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg);
+	int rd_msg_size = sd_count * sizeof(struct karan_rd_per_sd_logmsg);
+	int nb_msg_size = sd_count * sizeof(struct karan_nb_per_sd_logmsg);
 	int max_submsg_size = rd_msg_size > nb_msg_size ? rd_msg_size : nb_msg_size;
-	int msg_size = sizeof(struct karan_logmsg) + max_submsg_size;
+	int msg_size = sizeof(struct karan_logmsg) + max_submsg_size + space_for_per_cpu_msgs;
 	logbuf->msg_size = msg_size;
 
 	logbuf->msg_area = kzalloc(msg_size * CONFIG_KARAN_LOGBUF_SIZE, GFP_KERNEL);
@@ -11977,7 +12014,7 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 	int need_serialize, need_decay = 0;
 	u64 max_cost = 0;
 
-	struct karan_rd_entry_logmsg *entry = NULL;
+	struct karan_rd_per_sd_logmsg *entry = NULL;
        	if (rd_msg != NULL) {
 		entry = rd_msg->sd_buf;
 	}
@@ -12698,7 +12735,7 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 
 	rcu_read_lock();
 
-	struct karan_nb_entry_logmsg *entry = NULL;
+	struct karan_nb_per_sd_logmsg *entry = NULL;
 	if (nb_msg != NULL) {
 		entry = nb_msg->sd_buf;
 	}
