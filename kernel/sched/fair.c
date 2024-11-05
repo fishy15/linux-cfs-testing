@@ -8813,10 +8813,28 @@ struct karan_swb_logmsg {
 	int group_balance_cpu_sg;
 };
 
+struct karan_fbg_logmsg {
+	unsigned long sd_total_load;
+	unsigned long sd_total_capacity;
+	unsigned long avg_load;
+	unsigned int prefer_sibling;
+	struct sg_lb_stats busiest_stat;
+	struct sg_lb_stats local_stat;
+	bool sched_energy_enabled;
+	bool rd_perf_domain_exists;
+	bool rd_overutilized;
+	int busiest_cores;
+	int local_cores;
+
+	int ret_migration_type;
+	int ret_imbalance;
+};
+
 struct karan_lb_logmsg {
 	bool runs_load_balance;
 	struct lb_env env;
 	struct karan_swb_logmsg swb_logmsg;
+	struct karan_fbg_logmsg fbg_logmsg;
 };
 
 // values for a specific sched_domain iteration
@@ -10919,8 +10937,54 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
  *
  * Return:	- The busiest group if imbalance exists.
  */
-static struct sched_group *find_busiest_group(struct lb_env *env)
+static struct sched_group *find_busiest_group(struct lb_env *env, struct karan_fbg_logmsg *msg)
 {
+	/* Things accessed:
+	 * sds (after update_sd_lb_state)
+	 *   ^ might want to make it specific to what values
+	 *     it actually looks at
+	 * sched_energy_enabled()
+	 * rd = env->dst_rq->rd, rd->pd and rd->overutilized
+	 * sibling_imbalance(env, &sds, busiest, local)   <- look into impl
+	 *   - env->idle
+	 *   - busiest->sum_nr_running
+	 *   - sds->busiest->cores
+	 *   - sds->local->cores
+	 *   - local->sum_nr_running
+	 * smt_vs_nonsmt_groups(sds.local, sds.busiest)   <- look into impl
+	 *   - flags & SD_SHARE_CPUCAPACITY for each
+	 * calculate_imbalance(env, &sds)                 <- look into impl
+	 *   ^ this function sets values in env and sds i think
+	 *   - local = &sds->local_stat
+	 *   - busiest = &sds->busiest_stat
+	 *   - busiest->group_type
+	 *   - env->sd->flags & SD_ASYM_CPUCAPACITY
+	 *   - sets env->migration_type, env->imbalance
+	 *   - local->group_type
+	 *   - busiest->group_type
+	 *   - env->sd->flags & SD_SHARE_PKG_RESOURCES
+	 *   - local->group_capacity, local->group_util
+	 *   - env->idle
+	 *   - env->imbalance
+	 *   - busiest->group_weight
+	 *   - sds->prefer_sibling
+	 *   - sibling_imbalance(env, sds, busiest, local) [look above for this list]
+	 *   - env->sd->flags & SD_NUMA
+	 *   - adjust_numa_imbalance(env->imbalance, local->sum_nr_running+1, env->sd_imb_numa_nr)
+	 *     - env->imbalance
+	 *     - local->sum_nr_running
+	 *     - env->sd_imb_numa_nr
+	 *   - local->avg_load
+	 *   - local->group_load
+	 *   - local->group_capacity
+	 *   - busiest->avg_load
+	 *   - sds->total_load
+	 *   - sds->total_capacity
+	 *   - sds->avg_load
+	 *   - busiest->group_capacity
+	 * We can mark everything in sd_lb_stats, sg_lb_stats as data to be collected
+	 * for the "visible" state.
+	 */
 	struct sg_lb_stats *local, *busiest;
 	struct sd_lb_stats sds;
 
@@ -10932,6 +10996,18 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	 */
 	update_sd_lb_stats(env, &sds);
 
+	// copy values into logmsg
+	SET_IF_NOT_NULL(msg, sd_total_load, sds->total_load);
+	SET_IF_NOT_NULL(msg, sd_total_capacity, sds->total_capacity);
+	SET_IF_NOT_NULL(msg, sd_avg_load, sds->avg_load);
+	SET_IF_NOT_NULL(msg, sd_total_load, sds->total_load);
+	if (msg != NULL) {
+		memcpy(&msg->busiest_stat, sds->busiest_stat, sizeof(*sds->busiest_stat));
+		memcpy(&msg->local_stat, sds->local_stat, sizeof(*sds->local_stat));
+	}
+	SET_IF_NOT_NULL(msg, busiest_cores, sds->busiest->cores);
+	SET_IF_NOT_NULL(msg, local_cores, sds->local->cores);
+
 	/* There is no busy sibling group to pull tasks from */
 	if (!sds.busiest)
 		goto out_balanced;
@@ -10942,9 +11018,12 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	if (busiest->group_type == group_misfit_task)
 		goto force_balance;
 
+	SET_IF_NOT_NULL(msg, sched_energy_enabled, sched_energy_enabled());
 	if (sched_energy_enabled()) {
 		struct root_domain *rd = env->dst_rq->rd;
 
+		SET_IF_NOT_NULL(msg, rd_perf_domain_exists, rcu_dereference(rd->pd) != NULL);
+		SET_IF_NOT_NULL(msg, rd_overutilized, rd->overutilized);
 		if (rcu_dereference(rd->pd) && !READ_ONCE(rd->overutilized))
 			goto out_balanced;
 	}
@@ -11456,7 +11535,7 @@ redo:
 		goto out_balanced;
 	}
 
-	group = find_busiest_group(&env);
+	group = find_busiest_group(&env, &msg->fbg_logmsg);
 	if (!group) {
 		schedstat_inc(sd->lb_nobusyg[idle]);
 		goto out_balanced;
