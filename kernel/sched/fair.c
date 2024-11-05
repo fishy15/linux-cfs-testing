@@ -8767,6 +8767,46 @@ enum migration_type {
 #define LBF_SOME_PINNED	0x08
 #define LBF_ACTIVE_LB	0x10
 
+/*
+ * sg_lb_stats - stats of a sched_group required for load_balancing
+ */
+struct sg_lb_stats {
+	unsigned long avg_load; /*Avg load across the CPUs of the group */
+	unsigned long group_load; /* Total load over the CPUs of the group */
+	unsigned long group_capacity;
+	unsigned long group_util; /* Total utilization over the CPUs of the group */
+	unsigned long group_runnable; /* Total runnable time over the CPUs of the group */
+	unsigned int sum_nr_running; /* Nr of tasks running in the group */
+	unsigned int sum_h_nr_running; /* Nr of CFS tasks running in the group */
+	unsigned int idle_cpus;
+	unsigned int group_weight;
+	enum group_type group_type;
+	unsigned int group_asym_packing; /* Tasks should be moved to preferred CPU */
+	unsigned int group_smt_balance;  /* Task on busy SMT be moved */
+	unsigned long group_misfit_task_load; /* A CPU has a task too big for its capacity */
+#ifdef CONFIG_NUMA_BALANCING
+	unsigned int nr_numa_running;
+	unsigned int nr_preferred_running;
+#endif
+};
+
+
+/*
+ * sd_lb_stats - Structure to store the statistics of a sched_domain
+ *		 during load balancing.
+ */
+struct sd_lb_stats {
+	struct sched_group *busiest;	/* Busiest group in this sd */
+	struct sched_group *local;	/* Local group in this sd */
+	unsigned long total_load;	/* Total load of all groups in sd */
+	unsigned long total_capacity;	/* Total capacity of all groups in sd */
+	unsigned long avg_load;	/* Average load across all groups in sd */
+	unsigned int prefer_sibling; /* tasks should go to sibling first */
+
+	struct sg_lb_stats busiest_stat;/* Statistics of the busiest group */
+	struct sg_lb_stats local_stat;	/* Statistics of the local group */
+};
+
 struct lb_env {
 	struct sched_domain	*sd;
 
@@ -8799,9 +8839,41 @@ enum karan_codepath {
 	NEWIDLE_BALANCE
 };
 
+struct karan_swb_logmsg {
+	struct cpumask *swb_cpus;
+	// int dst_cpu;
+	// int cpus;
+	// int idle;
+	int dst_nr_running;
+	int dst_ttwu_pending;
+	struct cpumask *group_balance_mask_sg;
+	// these need to be per-core information
+	bool idle_cpu;
+	bool is_core_idle_cpu;
+	int group_balance_cpu_sg;
+};
+
+struct karan_fbg_logmsg {
+	unsigned long sd_total_load;
+	unsigned long sd_total_capacity;
+	unsigned long sd_avg_load;
+	unsigned int sd_prefer_sibling;
+	struct sg_lb_stats busiest_stat;
+	struct sg_lb_stats local_stat;
+	bool sched_energy_enabled;
+	bool rd_perf_domain_exists;
+	bool rd_overutilized;
+	int busiest_cores;
+	int local_cores;
+	// int ret_migration_type;
+	// int ret_imbalance;
+};
+
 struct karan_lb_logmsg {
 	bool runs_load_balance;
- 	struct lb_env env;
+	struct lb_env env;
+	struct karan_swb_logmsg swb_logmsg;
+	struct karan_fbg_logmsg fbg_logmsg;
 };
 
 // values for a specific sched_domain iteration
@@ -8819,7 +8891,7 @@ struct karan_rd_logmsg {
 	int cpu;
 	enum cpu_idle_type idle;
 	int sched_idle_cpu;
-  	struct karan_rd_entry_logmsg *sd_buf;
+	struct karan_rd_entry_logmsg *sd_buf;
 };
 
 // values for a specific sched_domain iteration
@@ -8846,7 +8918,7 @@ struct karan_nb_logmsg {
 	u64 max_idle_balance_cost;
 	unsigned int h_nr_running;
 };
-  
+
 struct karan_logmsg {
 	enum karan_codepath codepath;
 	union {
@@ -9496,45 +9568,6 @@ static void update_blocked_averages(int cpu)
 }
 
 /********** Helpers for find_busiest_group ************************/
-
-/*
- * sg_lb_stats - stats of a sched_group required for load_balancing
- */
-struct sg_lb_stats {
-	unsigned long avg_load; /*Avg load across the CPUs of the group */
-	unsigned long group_load; /* Total load over the CPUs of the group */
-	unsigned long group_capacity;
-	unsigned long group_util; /* Total utilization over the CPUs of the group */
-	unsigned long group_runnable; /* Total runnable time over the CPUs of the group */
-	unsigned int sum_nr_running; /* Nr of tasks running in the group */
-	unsigned int sum_h_nr_running; /* Nr of CFS tasks running in the group */
-	unsigned int idle_cpus;
-	unsigned int group_weight;
-	enum group_type group_type;
-	unsigned int group_asym_packing; /* Tasks should be moved to preferred CPU */
-	unsigned int group_smt_balance;  /* Task on busy SMT be moved */
-	unsigned long group_misfit_task_load; /* A CPU has a task too big for its capacity */
-#ifdef CONFIG_NUMA_BALANCING
-	unsigned int nr_numa_running;
-	unsigned int nr_preferred_running;
-#endif
-};
-
-/*
- * sd_lb_stats - Structure to store the statistics of a sched_domain
- *		 during load balancing.
- */
-struct sd_lb_stats {
-	struct sched_group *busiest;	/* Busiest group in this sd */
-	struct sched_group *local;	/* Local group in this sd */
-	unsigned long total_load;	/* Total load of all groups in sd */
-	unsigned long total_capacity;	/* Total capacity of all groups in sd */
-	unsigned long avg_load;	/* Average load across all groups in sd */
-	unsigned int prefer_sibling; /* tasks should go to sibling first */
-
-	struct sg_lb_stats busiest_stat;/* Statistics of the busiest group */
-	struct sg_lb_stats local_stat;	/* Statistics of the local group */
-};
 
 static inline void init_sd_lb_stats(struct sd_lb_stats *sds)
 {
@@ -10904,8 +10937,54 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
  *
  * Return:	- The busiest group if imbalance exists.
  */
-static struct sched_group *find_busiest_group(struct lb_env *env)
+static struct sched_group *find_busiest_group(struct lb_env *env, struct karan_fbg_logmsg *msg)
 {
+	/* Things accessed:
+	 * sds (after update_sd_lb_state)
+	 *   ^ might want to make it specific to what values
+	 *     it actually looks at
+	 * sched_energy_enabled()
+	 * rd = env->dst_rq->rd, rd->pd and rd->overutilized
+	 * sibling_imbalance(env, &sds, busiest, local)   <- look into impl
+	 *   - env->idle
+	 *   - busiest->sum_nr_running
+	 *   - sds->busiest->cores
+	 *   - sds->local->cores
+	 *   - local->sum_nr_running
+	 * smt_vs_nonsmt_groups(sds.local, sds.busiest)   <- look into impl
+	 *   - flags & SD_SHARE_CPUCAPACITY for each
+	 * calculate_imbalance(env, &sds)                 <- look into impl
+	 *   ^ this function sets values in env and sds i think
+	 *   - local = &sds->local_stat
+	 *   - busiest = &sds->busiest_stat
+	 *   - busiest->group_type
+	 *   - env->sd->flags & SD_ASYM_CPUCAPACITY
+	 *   - sets env->migration_type, env->imbalance
+	 *   - local->group_type
+	 *   - busiest->group_type
+	 *   - env->sd->flags & SD_SHARE_PKG_RESOURCES
+	 *   - local->group_capacity, local->group_util
+	 *   - env->idle
+	 *   - env->imbalance
+	 *   - busiest->group_weight
+	 *   - sds->prefer_sibling
+	 *   - sibling_imbalance(env, sds, busiest, local) [look above for this list]
+	 *   - env->sd->flags & SD_NUMA
+	 *   - adjust_numa_imbalance(env->imbalance, local->sum_nr_running+1, env->sd_imb_numa_nr)
+	 *     - env->imbalance
+	 *     - local->sum_nr_running
+	 *     - env->sd_imb_numa_nr
+	 *   - local->avg_load
+	 *   - local->group_load
+	 *   - local->group_capacity
+	 *   - busiest->avg_load
+	 *   - sds->total_load
+	 *   - sds->total_capacity
+	 *   - sds->avg_load
+	 *   - busiest->group_capacity
+	 * We can mark everything in sd_lb_stats, sg_lb_stats as data to be collected
+	 * for the "visible" state.
+	 */
 	struct sg_lb_stats *local, *busiest;
 	struct sd_lb_stats sds;
 
@@ -10917,9 +10996,22 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	 */
 	update_sd_lb_stats(env, &sds);
 
+	// copy values into logmsg
+	SET_IF_NOT_NULL(msg, sd_total_load, sds.total_load);
+	SET_IF_NOT_NULL(msg, sd_total_capacity, sds.total_capacity);
+	SET_IF_NOT_NULL(msg, sd_avg_load, sds.avg_load);
+	SET_IF_NOT_NULL(msg, sd_prefer_sibling, sds.prefer_sibling);
+	if (msg != NULL) {
+		memcpy(&msg->busiest_stat, &sds.busiest_stat, sizeof sds.busiest_stat);
+		memcpy(&msg->local_stat, &sds.local_stat, sizeof sds.local_stat);
+	}
+	SET_IF_NOT_NULL(msg, local_cores, sds.local->cores);
+
 	/* There is no busy sibling group to pull tasks from */
 	if (!sds.busiest)
 		goto out_balanced;
+
+	SET_IF_NOT_NULL(msg, busiest_cores, sds.busiest->cores);
 
 	busiest = &sds.busiest_stat;
 
@@ -10927,9 +11019,12 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	if (busiest->group_type == group_misfit_task)
 		goto force_balance;
 
+	SET_IF_NOT_NULL(msg, sched_energy_enabled, sched_energy_enabled());
 	if (sched_energy_enabled()) {
 		struct root_domain *rd = env->dst_rq->rd;
 
+		SET_IF_NOT_NULL(msg, rd_perf_domain_exists, rcu_dereference(rd->pd) != NULL);
+		SET_IF_NOT_NULL(msg, rd_overutilized, rd->overutilized);
 		if (rcu_dereference(rd->pd) && !READ_ONCE(rd->overutilized))
 			goto out_balanced;
 	}
@@ -11260,11 +11355,29 @@ static int need_active_balance(struct lb_env *env)
 
 static int active_load_balance_cpu_stop(void *data);
 
-static int should_we_balance(struct lb_env *env)
+static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_logmsg)
 {
+	/*
+	 * Things looked at in this function:
+	 * swb_cpus
+	 * env->dst_cpu
+	 * env->cpus
+	 * env->idle
+	 * env->dst_rq->nr_running
+	 * env->dst_rq->ttwu_pending
+	 * group_balance_mask(sg)
+	 * env->cpus
+	 * env->sd->flags & SD_SHARE_CPUCAPACITY
+	 * is_core_idle(cpu)
+	 * maybe store the resulting value of idle_smt?
+	 * env->dst_cpu
+	 * group_balance_cpu(sg), sg is env->sd->groups
+	 */
 	struct cpumask *swb_cpus = this_cpu_cpumask_var_ptr(should_we_balance_tmpmask);
 	struct sched_group *sg = env->sd->groups;
 	int cpu, idle_smt = -1;
+
+	SET_IF_NOT_NULL(swb_logmsg, swb_cpus, swb_cpus);
 
 	/*
 	 * Ensure the balancing environment is consistent; can happen
@@ -11281,12 +11394,19 @@ static int should_we_balance(struct lb_env *env)
 	 * to optimize wakeup latency.
 	 */
 	if (env->idle == CPU_NEWLY_IDLE) {
+		SET_IF_NOT_NULL(swb_logmsg, dst_nr_running, env->dst_rq->nr_running);
+		SET_IF_NOT_NULL(swb_logmsg, dst_ttwu_pending, env->dst_rq->ttwu_pending);
 		if (env->dst_rq->nr_running > 0 || env->dst_rq->ttwu_pending)
 			return 0;
 		return 1;
 	}
 
+
 	cpumask_copy(swb_cpus, group_balance_mask(sg));
+	if (swb_logmsg != NULL) {
+		cpumask_copy(swb_logmsg->swb_cpus, swb_cpus);
+	}
+
 	/* Try to find first idle CPU */
 	for_each_cpu_and(cpu, swb_cpus, env->cpus) {
 		if (!idle_cpu(cpu))
@@ -11323,6 +11443,7 @@ static int should_we_balance(struct lb_env *env)
 		return idle_smt == env->dst_cpu;
 
 	/* Are we the first CPU of this group ? */
+	SET_IF_NOT_NULL(swb_logmsg, group_balance_cpu_sg, group_balance_cpu(sg));
 	return group_balance_cpu(sg) == env->dst_cpu;
 }
 
@@ -11360,7 +11481,7 @@ static void karan_log_init (struct rq *rq) {
 	LOG_TOPOLOGY("running karan log init\n");
 
 	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
-	
+
 	int sd_count = 0;
 	struct sched_domain *sd;
 	for_each_domain(rq->cpu, sd) { sd_count++; }
@@ -11369,13 +11490,13 @@ static void karan_log_init (struct rq *rq) {
 ready:
 	logbuf->sd_count = sd_count;
         logbuf->cpu_count = nr_cpus;
-        
+
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_entry_logmsg);
 	int nb_msg_size = sd_count * sizeof(struct karan_nb_entry_logmsg);
 	int max_submsg_size = rd_msg_size > nb_msg_size ? rd_msg_size : nb_msg_size;
 	int msg_size = sizeof(struct karan_logmsg) + max_submsg_size;
 	logbuf->msg_size = msg_size;
-	
+
 	logbuf->msg_area = kzalloc(msg_size * CONFIG_KARAN_LOGBUF_SIZE, GFP_KERNEL);
 	logbuf->position = CONFIG_KARAN_LOGBUF_SIZE - 1; // will be incremented on first alloc
 }
@@ -11412,12 +11533,12 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 	schedstat_inc(sd->lb_count[idle]);
 
 redo:
-	if (!should_we_balance(&env)) {
+	if (!should_we_balance(&env, &msg->swb_logmsg)) {
 		*continue_balancing = 0;
 		goto out_balanced;
 	}
 
-	group = find_busiest_group(&env);
+	group = find_busiest_group(&env, &msg->fbg_logmsg);
 	if (!group) {
 		schedstat_inc(sd->lb_nobusyg[idle]);
 		goto out_balanced;
@@ -11838,7 +11959,7 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 	if (msg != NULL) {
 		rd_msg = &msg->rd_msg;
 	}
-	
+
 	int continue_balancing = 1;
 
 	int cpu = rq->cpu;
@@ -12499,7 +12620,7 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 	// rest of the info may only be for updates but we can log anyways
 	// this_rq->max_idle_balance_cost
 	// this_rq->cfs.h_nr_running
-	
+
 	if (unlikely(this_rq->cfs.karan_logbuf.sd_count == 0)) {
 		karan_log_init(this_rq);
 	}
@@ -12514,7 +12635,7 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 
 	int this_cpu = this_rq->cpu;
 	SET_IF_NOT_NULL(nb_msg, this_cpu, this_rq->cpu);
-	
+
 	u64 t0, t1, curr_cost = 0;
 	struct sched_domain *sd;
 	int pulled_task = 0;
