@@ -8842,8 +8842,9 @@ enum karan_codepath {
 // preprocessor system for percpu state
 // yikes !
 // TODO who is initing? i forget
-#define ACQUIRE_PER_CPU_LOGMSG(msg, cpuid) (msg->next_per_cpu_msg_slot->cpu_id = cpuid,\
-                                            msg->next_per_cpu_msg_slot)
+#define ACQUIRE_PER_CPU_LOGMSG(msg, cpuid) msg->next_per_cpu_msg_slot ?\
+	(msg->next_per_cpu_msg_slot->cpu_id = cpuid,\
+	 msg->next_per_cpu_msg_slot++) : NULL
 
 struct karan_swb_per_cpu_logmsg {
     int cpu_id;
@@ -8913,7 +8914,7 @@ struct karan_lb_logmsg {
 	struct lb_env env;
 	struct karan_swb_logmsg swb_logmsg;
 	struct karan_fbg_logmsg fbg_logmsg;
-        struct karan_fbq_logmsg fbq_logmsg;
+	struct karan_fbq_logmsg fbq_logmsg;
 };
 
 // values for a specific sched_domain iteration
@@ -11181,8 +11182,8 @@ out_balanced:
  * find_busiest_queue - find the busiest runqueue among the CPUs in the group.
  */
 static struct rq *find_busiest_queue(struct lb_env *env,
-                                     struct sched_group *group,
-                                     struct karan_fbq_logmsg fbq_logmsg)
+				     struct sched_group *group,
+				     struct karan_fbq_logmsg *fbq_logmsg)
 {
 	struct rq *busiest = NULL, *rq;
 	unsigned long busiest_util = 0, busiest_load = 0, busiest_capacity = 1;
@@ -11190,8 +11191,8 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 	int i;
 
 	for_each_cpu_and(i, sched_group_span(group), env->cpus) {
-        struct karan_fbq_per_cpu_logmsg *per_cpu_logmsg = ACQUIRE_PER_CPU_LOGMSG(fbq_logmsg, i);
-        
+	struct karan_fbq_per_cpu_logmsg *per_cpu_logmsg = ACQUIRE_PER_CPU_LOGMSG(fbq_logmsg, i);
+	
 		unsigned long capacity, load, util;
 		unsigned int nr_running;
 		enum fbq_type rt;
@@ -11222,13 +11223,13 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 			continue;
 
 		nr_running = rq->cfs.h_nr_running;
-        SET_IF_NOT_NULL(per_cpu_logmsg, rq_cfs_h_nr_running, nr_running);
+	SET_IF_NOT_NULL(per_cpu_logmsg, rq_cfs_h_nr_running, nr_running);
 		if (!nr_running)
 			continue;
 
 		capacity = capacity_of(i);
-        SET_IF_NOT_NULL(per_cpu_logmsg, capacity, capacity);
-        
+	SET_IF_NOT_NULL(per_cpu_logmsg, capacity, capacity);
+	
 		/*
 		 * For ASYM_CPUCAPACITY domains, don't pick a CPU that could
 		 * eventually lead to active_balancing high->low capacity.
@@ -11260,8 +11261,8 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 			 * which is not scaled with the CPU capacity.
 			 */
 			load = cpu_load(rq);
-            SET_IF_NOT_NULL(per_cpu_logmsg, cpu_load, load);
-            
+	    SET_IF_NOT_NULL(per_cpu_logmsg, cpu_load, load);
+	    
 			if (nr_running == 1 && load > env->imbalance &&
 			    !check_cpu_capacity(rq, env->sd))
 				break;
@@ -11288,8 +11289,8 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 
 		case migrate_util:
 			util = cpu_util_cfs_boost(i);
-            SET_IF_NOT_NULL(per_cpu_logmsg, cpu_util_cfs_boost, util);
-            
+	    SET_IF_NOT_NULL(per_cpu_logmsg, cpu_util_cfs_boost, util);
+	    
 			/*
 			 * Don't try to pull utilization from a CPU with one
 			 * running task. Whatever its utilization, we will fail
@@ -11456,9 +11457,9 @@ static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_lo
 
 	/* Try to find first idle CPU */
 	for_each_cpu_and(cpu, swb_cpus, env->cpus) {
-        struct karan_swb_per_cpu_logmsg *per_cpu_logmsg = ACQUIRE_PER_CPU_LOGMSG(swb_logmsg, cpu);
-        
-        SET_IF_NOT_NULL(per_cpu_logmsg, idle_cpu, idle_cpu);
+		struct karan_swb_per_cpu_logmsg *per_cpu_logmsg = ACQUIRE_PER_CPU_LOGMSG(swb_logmsg, cpu);
+		
+		SET_IF_NOT_NULL(per_cpu_logmsg, idle_cpu, idle_cpu(cpu));
 		if (!idle_cpu(cpu))
 			continue;
 
@@ -11467,7 +11468,7 @@ static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_lo
 		 * balancing cores, but remember the first idle SMT CPU for
 		 * later consideration.  Find CPU on an idle core first.
 		 */
-        SET_IF_NOT_NULL(per_cpu_logmsg, is_core_idle_cpu, is_core_idle(cpu));
+		SET_IF_NOT_NULL(per_cpu_logmsg, is_core_idle_cpu, is_core_idle(cpu));
 		if (!(env->sd->flags & SD_SHARE_CPUCAPACITY) && !is_core_idle(cpu)) {
 			if (idle_smt == -1)
 				idle_smt = cpu;
@@ -11513,18 +11514,28 @@ static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath
 	msg->codepath = codepath;
 	if (codepath == REBALANCE_DOMAINS) {
 		msg->rd_msg.sd_buf = (struct karan_rd_per_sd_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
-                void *per_cpu_msg_area = ((void *) msg->rd_msg.sd_buf) + (logbuf->sd_count * sizeof(struct karan_rd_per_sd_logmsg));
-                for (int i = 0; i < logbuf->sd_count; i++) {
-                        struct karan_rd_per_sd_logmsg *sd_logmsg = msg->rd_msg.sd_buf + i;
-                        sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs = (struct karan_fbq_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg));
-                }
+		void *per_cpu_msg_area = ((void *) msg->rd_msg.sd_buf) + (logbuf->sd_count * sizeof(struct karan_rd_per_sd_logmsg));
+		for (int i = 0; i < logbuf->sd_count; i++) {
+			struct karan_rd_per_sd_logmsg *sd_logmsg = msg->rd_msg.sd_buf + i;
+			sd_logmsg->lb_logmsg.swb_logmsg.per_cpu_msgs = (struct karan_swb_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_swb_per_cpu_logmsg));
+			sd_logmsg->lb_logmsg.swb_logmsg.next_per_cpu_msg_slot =
+				sd_logmsg->lb_logmsg.swb_logmsg.per_cpu_msgs;
+			sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs = (struct karan_fbq_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg));
+			sd_logmsg->lb_logmsg.fbq_logmsg.next_per_cpu_msg_slot =
+				sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs;
+		}
 	} else {
 		msg->nb_msg.sd_buf = (struct karan_nb_per_sd_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
-                void *per_cpu_msg_area = ((void *) msg->nb_msg.sd_buf) + (logbuf->sd_count * sizeof(struct karan_nb_per_sd_logmsg));
-                for (int i = 0; i < logbuf->sd_count; i++) {
-                        struct karan_nb_per_sd_logmsg *sd_logmsg = msg->nb_msg.sd_buf + i;
-                        sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs = (struct karan_fbq_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg));
-                }
+		void *per_cpu_msg_area = ((void *) msg->nb_msg.sd_buf) + (logbuf->sd_count * sizeof(struct karan_nb_per_sd_logmsg));
+		for (int i = 0; i < logbuf->sd_count; i++) {
+			struct karan_nb_per_sd_logmsg *sd_logmsg = msg->nb_msg.sd_buf + i;
+			sd_logmsg->lb_logmsg.swb_logmsg.per_cpu_msgs = (struct karan_swb_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_swb_per_cpu_logmsg));
+			sd_logmsg->lb_logmsg.swb_logmsg.next_per_cpu_msg_slot =
+				sd_logmsg->lb_logmsg.swb_logmsg.per_cpu_msgs;
+			sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs = (struct karan_fbq_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg));
+			sd_logmsg->lb_logmsg.fbq_logmsg.next_per_cpu_msg_slot =
+				sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs;
+		}
 	}
 
 	return msg;
@@ -11547,12 +11558,12 @@ static void karan_log_init (struct rq *rq) {
 	struct sched_domain *sd;
 	for_each_domain(rq->cpu, sd) { sd_count++; }
 	if (sd_count == 0) { return; } else { goto ready; }
-        
+	
 ready:
 	logbuf->sd_count = sd_count;
-        logbuf->cpu_count = nr_cpu_ids;
+	logbuf->cpu_count = nr_cpu_ids;
 
-        int space_for_per_cpu_msgs = sd_count * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg);
+	int space_for_per_cpu_msgs = sd_count * nr_cpu_ids * (sizeof(struct karan_swb_per_cpu_logmsg) + sizeof(struct karan_fbq_per_cpu_logmsg));
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_per_sd_logmsg);
 	int nb_msg_size = sd_count * sizeof(struct karan_nb_per_sd_logmsg);
 	int max_submsg_size = rd_msg_size > nb_msg_size ? rd_msg_size : nb_msg_size;
