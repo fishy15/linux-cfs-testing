@@ -8,20 +8,11 @@ if [ -z $ATTACH ]; then
     TOPOLOGY="$TOPOLOGY" runvm lfs -s -S  >/dev/null 2>&1 &
 fi
 
-if [ -n $FILE ] || [ -n $ITERS ]; then
-	if [ -n $FILE ] && [ -n $ITERS ]; then
-		gdb kbuild/vmlinux --quiet --batch \
-			-ex "py TOPOLOGY=\"$TOPOLOGY\"" \
-			-ex "py FILE=\"$FILE\"" \
-			-ex "py ITERS=\"$ITERS\"" \
-			-x kernel/dumper.py
-	else
-		echo 'both $FILE and $ITERS need to be specified'
-	fi
+if [ ! -z $FILE ]; then
+	gdb kbuild/vmlinux --quiet \
+		-ex "py TOPOLOGY=\"$TOPOLOGY\"" \
+		-ex "py FILE=\"$FILE\"" \
+		-x kernel/dumper.py
 else
 	gdb kbuild/vmlinux --quiet -ex "py TOPOLOGY=\"$TOPOLOGY\"" -x kernel/dumper.py
-fi
-
-if [ -z $ATTACH ]; then
-    #killall qemu-system-x86_64 --quiet
 fi

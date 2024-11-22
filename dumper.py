@@ -198,11 +198,9 @@ else:
 ## setup file
 
 try:
-    file = open(FILE, 'w')
+    FILE
 except NameError:
     FILE = None
-    file = None
-total_data = []
 
 ## set up iteration count
 try:
@@ -229,13 +227,16 @@ def exec_capture_output(cmd):
 
 ## helper functions to extract information out 
 
-def get_slot(rq):
-    position = f'{rq}->cfs.karan_logbuf.position'
+def get_slot(rq, position=None):
+    if position is None:
+        position = f'{rq}->cfs.karan_logbuf.position'
     print('RQ:', read_value(rq))
     print('POSITION:', read_value(position))
     return read_value(f'{rq}->cfs.karan_logbuf.msgs[{position}]')
 
 def get_logmsg_info(ptr):
+    if ptr == '0x0' or read_value(ptr) == '0x0':
+        return None
     ptr = f'((struct karan_logmsg *) {ptr})'  # cast to the right type
     codepath = read_value(f'{ptr}->codepath')
     print('CODEPATH:', codepath)
@@ -243,10 +244,12 @@ def get_logmsg_info(ptr):
         data = read_rebalance_domains(f'{ptr}->rd_msg')
     else:
         data = None
-
+    return data
+    '''
     if data is not None:
         print(data)
         total_data.append(data)
+    '''
 
 def read_value(val):
     tokens = exec_capture_output(f'p {val}').split()
@@ -314,6 +317,22 @@ def handle_karan_newidle_balance_ret():
     print(ptr)
     get_logmsg_info(ptr)
 
+total_data = []
+def handle_wraparound():
+    global total_data
+    # dump whole buffer
+    buf = 'rq->cfs.karan_logbuf'
+    num_entries = read_int(f'sizeof({buf}.msgs) / sizeof(*{buf}.msgs)')
+    print('NUM ENTRIES:', num_entries)
+    num_entries = 4
+    data = [get_logmsg_info(get_slot('rq', i)) for i in range(num_entries)]
+    total_data.extend(data)
+    if FILE is not None:
+        with open(FILE, 'w') as f:
+            json.dump(total_data, f, cls=Encoder)
+            print(len(total_data))
+            # print(json.dumps(total_data, cls=Encoder))
+    
 def breakpoint_handler(event):
     if isinstance(event, gdb.BreakpointEvent):
         bp = event.breakpoints[0]
@@ -327,6 +346,8 @@ def breakpoint_handler(event):
             handle_newidle_balance()
         elif typ == 4:
             handle_karan_newidle_balance_ret()
+        elif typ == 5:
+            handle_wraparound() # dmup
         else:
             print('oh no')
 
@@ -350,6 +371,11 @@ exec('dis 1')
 exec('b rebalance_domains:out')
 exec('b newidle_balance:out')
 exec('b karan_newidle_balance_ret')
+
+exec('dis 2')
+exec('dis 3')
+exec('dis 4')
+exec('b karan_msg_alloc_wraparound')
 
 exec('c')
 

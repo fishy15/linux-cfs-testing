@@ -11499,11 +11499,18 @@ static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_lo
 	return group_balance_cpu(sg) == env->dst_cpu;
 }
 
+static noinline int karan_msg_alloc_wraparound(struct rq *rq) {
+	volatile int hi = rq ? 0x293743 : 0x093859;
+	hi += 1;
+	return hi ^ hi;
+}
+
 static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath codepath) {
 	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
 	if (logbuf->sd_count == 0) { return NULL; }
 
 	if (++logbuf->position == CONFIG_KARAN_LOGBUF_SIZE) {
+		karan_msg_alloc_wraparound(rq);
 		logbuf->position = 0;
 	}
 
