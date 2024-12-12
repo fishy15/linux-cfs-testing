@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/.."
 
 set -x
 if [ -z $1 ]; then
@@ -26,7 +26,7 @@ else
     topology="-smp cpus=$CORES"
 fi
 
-echo "$1" | grep -e "\.qcow2$" -e "\.img" > /dev/null
+echo "$1" | grep -e "\.qcow2$" -e '\.q$' > /dev/null
 if [ "$?" = "0" ]; then
     drive="/dev/sda1"
 else
