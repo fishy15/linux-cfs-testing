@@ -2,7 +2,7 @@
 
 set -x
 
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/.."
 
 if [ -z $ATTACH ]; then
     TOPOLOGY="$TOPOLOGY" runvm lfs -s -S  >/dev/null 2>&1 &
