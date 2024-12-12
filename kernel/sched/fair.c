@@ -8847,9 +8847,8 @@ enum karan_codepath {
 	 msg->next_per_cpu_msg_slot++) : NULL
 
 struct karan_swb_per_cpu_logmsg {
-    int cpu_id;
-
-    bool idle_cpu;
+   	int cpu_id;
+	bool idle_cpu;
 	bool is_core_idle_cpu;
 };
 
@@ -8863,8 +8862,8 @@ struct karan_swb_logmsg {
 	struct cpumask *group_balance_mask_sg;
 	int group_balance_cpu_sg;
 
-    struct karan_swb_per_cpu_logmsg *per_cpu_msgs;
-    struct karan_swb_per_cpu_logmsg *next_per_cpu_msg_slot;
+	struct karan_swb_per_cpu_logmsg *per_cpu_msgs;
+	struct karan_swb_per_cpu_logmsg *next_per_cpu_msg_slot;
 };
 
 struct karan_fbg_logmsg {
@@ -11191,7 +11190,7 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 	int i;
 
 	for_each_cpu_and(i, sched_group_span(group), env->cpus) {
-	struct karan_fbq_per_cpu_logmsg *per_cpu_logmsg = ACQUIRE_PER_CPU_LOGMSG(fbq_logmsg, i);
+		struct karan_fbq_per_cpu_logmsg *per_cpu_logmsg = ACQUIRE_PER_CPU_LOGMSG(fbq_logmsg, i);
 	
 		unsigned long capacity, load, util;
 		unsigned int nr_running;
@@ -11223,12 +11222,12 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 			continue;
 
 		nr_running = rq->cfs.h_nr_running;
-	SET_IF_NOT_NULL(per_cpu_logmsg, rq_cfs_h_nr_running, nr_running);
+		SET_IF_NOT_NULL(per_cpu_logmsg, rq_cfs_h_nr_running, nr_running);
 		if (!nr_running)
 			continue;
 
 		capacity = capacity_of(i);
-	SET_IF_NOT_NULL(per_cpu_logmsg, capacity, capacity);
+		SET_IF_NOT_NULL(per_cpu_logmsg, capacity, capacity);
 	
 		/*
 		 * For ASYM_CPUCAPACITY domains, don't pick a CPU that could
@@ -11261,7 +11260,7 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 			 * which is not scaled with the CPU capacity.
 			 */
 			load = cpu_load(rq);
-	    SET_IF_NOT_NULL(per_cpu_logmsg, cpu_load, load);
+			SET_IF_NOT_NULL(per_cpu_logmsg, cpu_load, load);
 	    
 			if (nr_running == 1 && load > env->imbalance &&
 			    !check_cpu_capacity(rq, env->sd))
@@ -11289,7 +11288,7 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 
 		case migrate_util:
 			util = cpu_util_cfs_boost(i);
-	    SET_IF_NOT_NULL(per_cpu_logmsg, cpu_util_cfs_boost, util);
+			SET_IF_NOT_NULL(per_cpu_logmsg, cpu_util_cfs_boost, util);
 	    
 			/*
 			 * Don't try to pull utilization from a CPU with one
