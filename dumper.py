@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from typing import List, Optional
 
+import sys
+
 #### TYPES ####
 
 ## All of the read functions here assume the string given
@@ -120,19 +122,75 @@ def read_lb_env(lb_env) -> LBEnv:
     return LBEnv(sd, src_rq, src_cpu, dst_cpu, dst_rq, dst_grpmask, new_dst_cpu, idle,
             imbalance, cpus, flags, loop, loop_break, loop_max, fbq_type, migration_type)
 
+@dataclass
+class SWBPerCpuLogMsg:
+    cpu_id: int
+    idle_cpu: bool
+    is_core_idle_cpu: bool
+
+def read_swb_per_cpu_logmsg(per_cpu_msg) -> SWBPerCpuLogMsg:
+    cpu_id = read_int(f'{per_cpu_msg}.cpu_id')
+    idle_cpu = read_bool(f'{per_cpu_msg}.idle_cpu')
+    is_core_idle_cpu = read_bool(f'{per_cpu_msg}.is_core_idle_cpu')
+    return SWBPerCpuLogMsg(cpu_id, idle_cpu, is_core_idle_cpu)
+
+
+@dataclass
+class SWBLogMsg:
+    swb_cpus: CpuMask
+    dst_nr_running: int
+    dst_ttwu_pending: int
+    group_balance_mask_sg: CpuMask
+    group_balance_cpu_sg: int
+
+def read_swb_logmsg(swb_logmsg) -> SWBLogMsg:
+    swb_cpus = read_if_not_null(f'{swb_logmsg}.swb_cpus', read_cpumask)
+    dst_nr_running = read_int(f'{swb_logmsg}.dst_nr_running')
+    dst_ttwu_pending = read_int(f'{swb_logmsg}.dst_ttwu_pending')
+    group_balance_mask_sg = read_if_not_null(f'{swb_logmsg}.group_balance_mask_sg', read_cpumask)
+    group_balance_cpu_sg = read_int(f'{swb_logmsg}.group_balance_cpu_sg')
+
+    ptr_diff = f'({swb_logmsg}.next_per_cpu_msg_slot - {swb_logmsg}.per_cpu_msgs)'
+    num_entries = read_int(f'{ptr_diff} / sizeof({swb_logmsg}.per_cpu_msgs[0])')
+    print('NUM ENTRIES:', num_entries)
+    per_cpu_msgs = [read_swb_per_cpu_logmsg(f'{swb_logmsg}.per_cpu_msgs[{i}]') for i in range(num_entries)]
+
+    return SWBLogMsg(swb_cpus, dst_nr_running, dst_ttwu_pending, group_balance_mask_sg, group_balance_cpu_sg)
+
+
+@dataclass
+class FBGLogMsg:
+    pass
+
+def read_fbg_logmsg(fbg_logmsg):
+    return None
+
+
+@dataclass
+class FBQLogMsg:
+    pass
+
+def read_fbq_logmsg(fbq_logmsg):
+    return None
 
 @dataclass
 class LBLogMsg:
-    runs_load_balance: bool
     lb_env: LBEnv
+    swb_logmsg: SWBLogMsg
+    fbg_logmsg: FBGLogMsg
+    fbq_logmsg: FBQLogMsg
 
-def read_lb_logmsg(lb_logmsg) -> LBLogMsg:
+def read_lb_logmsg(lb_logmsg) -> Optional[LBLogMsg]:
     runs_load_balance = read_bool(f'{lb_logmsg}.runs_load_balance')
     if runs_load_balance:
         lb_env = read_lb_env(f'{lb_logmsg}.env')
+        swb_logmsg = read_swb_logmsg(f'{lb_logmsg}.swb_logmsg')
+        fbg_logmsg = read_fbg_logmsg(f'{lb_logmsg}.fbg_logmsg')
+        fbq_logmsg = read_fbq_logmsg(f'{lb_logmsg}.fbq_logmsg')
+        return LBLogMsg(lb_env, swb_logmsg, fbg_logmsg, fbq_logmsg)
     else:
+        return None
         lb_env = None
-    return LBLogMsg(runs_load_balance, lb_env)
 
 
 @dataclass
@@ -141,7 +199,7 @@ class RDEntryLogMsg:
     continue_balancing: int
     interval: int
     need_serialize: int
-    lb_logmsg: LBLogMsg
+    lb_logmsg: Optional[LBLogMsg]
     new_idle: CpuIdleType
     new_busy: int
 
@@ -208,11 +266,17 @@ try:
 except:
     ITERS = None
 
+try:
+    SWK
+except:
+    SWK = None
+
 # print config to user
 print('TOPOLOGY:', TOPOLOGY)
 print('CORES:', CORES)
 print('FILE:', FILE)
 print('ITERS:', ITERS)
+print('SWK:', SWK)
 
 ## Command to interact with GDB
 
@@ -324,7 +388,6 @@ def handle_wraparound():
     buf = 'rq->cfs.karan_logbuf'
     num_entries = read_int(f'sizeof({buf}.msgs) / sizeof(*{buf}.msgs)')
     print('NUM ENTRIES:', num_entries)
-    num_entries = 4
     data = [get_logmsg_info(get_slot('rq', i)) for i in range(num_entries)]
     total_data.extend(data)
     if FILE is not None:
@@ -360,11 +423,10 @@ exec('file /l/kbuild/vmlinux')
 exec('tar rem :1234')
 
 exec('b karan_log_init:ready')
-
-while ready_count < CORES:
-    exec('c')
-
-print('we are ready now')
+if SWK is None:
+    while ready_count < CORES:
+        exec('c')
+    print('we are ready now')
 
 # once we have made everything ready
 exec('dis 1')
@@ -377,13 +439,17 @@ exec('dis 3')
 exec('dis 4')
 exec('b karan_msg_alloc_wraparound')
 
-exec('c')
-
-# go until the first example
-if ITERS is not None:
-    for i in range(ITERS):
-        print('ON ITER', i)
-        exec('c')
-    json.dump(total_data, file, cls=Encoder)
-    print(json.dumps(total_data, cls=Encoder))
-    file.close()
+if SWK is None:
+    # go until the first example
+    exec('c')
+    if ITERS is not None:
+        for i in range(ITERS):
+            print('ON ITER', i)
+            exec('c')
+        json.dump(total_data, file, cls=Encoder)
+        print(json.dumps(total_data, cls=Encoder))
+        file.close()
+else:
+    exec('dis 5')
+    print('READY_FOR_SSH')
+    exec('c')
