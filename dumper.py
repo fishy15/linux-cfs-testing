@@ -150,8 +150,7 @@ def read_swb_logmsg(swb_logmsg) -> SWBLogMsg:
     group_balance_mask_sg = read_if_not_null(f'{swb_logmsg}.group_balance_mask_sg', read_cpumask)
     group_balance_cpu_sg = read_int(f'{swb_logmsg}.group_balance_cpu_sg')
 
-    ptr_diff = f'({swb_logmsg}.next_per_cpu_msg_slot - {swb_logmsg}.per_cpu_msgs)'
-    num_entries = read_int(f'{ptr_diff} / sizeof({swb_logmsg}.per_cpu_msgs[0])')
+    num_entries = read_int(f'{swb_logmsg}.next_per_cpu_msg_slot - {swb_logmsg}.per_cpu_msgs')
     print('NUM ENTRIES:', num_entries)
     per_cpu_msgs = [read_swb_per_cpu_logmsg(f'{swb_logmsg}.per_cpu_msgs[{i}]') for i in range(num_entries)]
 
@@ -246,11 +245,55 @@ def read_fbg_logmsg(fbg_logmsg) -> FBGLogMsg:
 
 
 @dataclass
-class FBQLogMsg:
-    pass
+class FBQPerCpuLogMsg:
+    cpu_id: int
+    rq_nr_running: int
+    rq_nr_preferred_running: int
+    rq_cfs_h_nr_running: int
+    capacity: int
+    is_core_idle: bool
+    arch_asym_cpu_priority: int
+    cpu_load: int
+    cpu_util_cfs_boost: int
+    rq_cpu_capacity: int
+    sd_imbalance_pct: int
+    arch_scale_cpu_capacity: int
 
-def read_fbq_logmsg(fbq_logmsg):
-    return None
+def read_fbq_per_cpu_logmsg(msg) -> FBQPerCpuLogMsg:
+    cpu_id = read_int(f'{msg}.cpu_id')
+    rq_nr_running = read_int(f'{msg}.rq_nr_running')
+    rq_nr_preferred_running = read_int(f'{msg}.rq_nr_preferred_running')
+    rq_cfs_h_nr_running = read_int(f'{msg}.rq_cfs_h_nr_running')
+    capacity = read_int(f'{msg}.capacity')
+    is_core_idle = read_bool(f'{msg}.is_core_idle')
+    arch_asym_cpu_priority = read_int(f'{msg}.arch_asym_cpu_priority')
+    cpu_load = read_int(f'{msg}.cpu_load')
+    cpu_util_cfs_boost = read_int(f'{msg}.cpu_util_cfs_boost')
+    rq_cpu_capacity = read_int(f'{msg}.rq_cpu_capacity')
+    sd_imbalance_pct = read_int(f'{msg}.sd_imbalance_pct')
+    arch_scale_cpu_capacity = read_int(f'{msg}.arch_scale_cpu_capacity')
+    return FBQPerCpuLogMsg(cpu_id, rq_nr_running, rq_nr_preferred_running, rq_cfs_h_nr_running, capacity, 
+            is_core_idle, arch_asym_cpu_priority, cpu_load, cpu_util_cfs_boost, rq_cpu_capacity, 
+            sd_imbalance_pct, arch_scale_cpu_capacity)
+
+
+@dataclass
+class FBQLogMsg:
+    capacity_dst_cpu: int
+    sched_smt_active: bool
+    arch_asym_cpu_priority_dst_cpu: int
+    per_cpu_msgs: List[FBQPerCpuLogMsg]
+
+def read_fbq_logmsg(fbq_logmsg) -> FBQLogMsg:
+    capacity_dst_cpu = read_int(f'{fbq_logmsg}.capacity_dst_cpu')
+    sched_smt_active = read_bool(f'{fbq_logmsg}.sched_smt_active')
+    arch_asym_cpu_priority_dst_cpu = read_int(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu')
+
+    num_entries = read_int(f'{fbq_logmsg}.next_per_cpu_msg_slot - {fbq_logmsg}.per_cpu_msgs')
+    print('NUM ENTRIES:', num_entries)
+    per_cpu_msgs = [read_fbq_per_cpu_logmsg(f'{fbq_logmsg}.per_cpu_msgs[{i}]') for i in range(num_entries)]
+    return FBQLogMsg(capacity_dst_cpu, sched_smt_active, arch_asym_cpu_priority_dst_cpu, per_cpu_msgs)
+
 
 @dataclass
 class LBLogMsg:

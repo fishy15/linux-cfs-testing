@@ -8891,7 +8891,7 @@ struct karan_fbq_per_cpu_logmsg {
     unsigned int rq_cfs_h_nr_running; // done
     unsigned long capacity; // done
     bool is_core_idle;
-    int asch_asym_cpu_priority;
+    int arch_asym_cpu_priority;
     unsigned long cpu_load; // done
     unsigned long cpu_util_cfs_boost; // done
     int rq_cpu_capacity;
