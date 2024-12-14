@@ -157,13 +157,92 @@ def read_swb_logmsg(swb_logmsg) -> SWBLogMsg:
 
     return SWBLogMsg(swb_cpus, dst_nr_running, dst_ttwu_pending, group_balance_mask_sg, group_balance_cpu_sg)
 
+class GroupType(Enum):
+    group_has_spare = 0
+    group_fully_busy = 1
+    group_misfit_task = 2
+    group_smt_balance = 3
+    group_asym_packing = 4
+    group_imbalanced = 5
+    group_overloaded = 6
+
+def read_group_type(typ):
+    value = read_value(typ)
+    for option in GroupType:
+        if option.name == value:
+            return option
+    raise Exception(f'No matching group type for {value}')
+
+
+@dataclass
+class SgLbStats:
+    avg_load: int
+    group_load: int
+    group_capacity: int
+    group_util: int
+    group_runnable: int
+    sum_nr_running: int
+    sum_h_nr_running: int
+    idle_cpus: int
+    group_weight: int
+    group_type: GroupType
+    group_asym_packing: int
+    group_smt_balance: int
+    group_misfit_task_load: int
+    # currently we haven't compiled support
+    # nr_numa_running: int
+    # nr_preferred_running: int
+
+
+def read_sg_lb_stats(stats) -> SgLbStats:
+    avg_load = read_int(f'{stats}.avg_load')
+    group_load = read_int(f'{stats}.group_load')
+    group_capacity = read_int(f'{stats}.group_capacity')
+    group_util = read_int(f'{stats}.group_util')
+    group_runnable = read_int(f'{stats}.group_runnable')
+    sum_nr_running = read_int(f'{stats}.sum_nr_running')
+    sum_h_nr_running = read_int(f'{stats}.sum_h_nr_running')
+    idle_cpus = read_int(f'{stats}.idle_cpus')
+    group_weight = read_int(f'{stats}.group_weight')
+    group_type = read_group_type(f'{stats}.group_type')
+    group_asym_packing = read_int(f'{stats}.group_asym_packing')
+    group_smt_balance = read_int(f'{stats}.group_smt_balance')
+    group_misfit_task_load = read_int(f'{stats}.group_misfit_task_load')
+    # nr_numa_running = read_int(f'{stats}.nr_numa_running')
+    # nr_preferred_running = read_int(f'{stats}.nr_preferred_running')
+    return SgLbStats(avg_load, group_load, group_capacity, group_util, group_runnable, sum_nr_running,
+            sum_h_nr_running, idle_cpus, group_weight, group_type, group_asym_packing, group_smt_balance,
+            group_misfit_task_load)
+
 
 @dataclass
 class FBGLogMsg:
-    pass
+    sd_total_load: int
+    sd_total_capacity: int
+    sd_avg_load: int
+    sd_prefer_sibling: int
+    busiest_stat: SgLbStats
+    local_stat: SgLbStats
+    sched_energy_enabled: bool
+    rd_perf_domain_exists: bool
+    rd_overutilized: bool
+    busiest_cores: int
+    local_cores: int
 
-def read_fbg_logmsg(fbg_logmsg):
-    return None
+def read_fbg_logmsg(fbg_logmsg) -> FBGLogMsg:
+    sd_total_load = read_int(f'{fbg_logmsg}.sd_total_load')
+    sd_total_capacity = read_int(f'{fbg_logmsg}.sd_total_capacity')
+    sd_total_load = read_int(f'{fbg_logmsg}.sd_total_load')
+    sd_prefer_sibling = read_int(f'{fbg_logmsg}.sd_prefer_sibling')
+    busiest_stat = read_sg_lb_stats(f'{fbg_logmsg}.busiest_stat')
+    local_stat = read_sg_lb_stats(f'{fbg_logmsg}.local_stat')
+    sched_energy_enabled = read_bool(f'{fbg_logmsg}.sched_energy_enabled')
+    rd_perf_domain_exists = read_bool(f'{fbg_logmsg}.rd_perf_domain_exists')
+    rd_overutilized = read_bool(f'{fbg_logmsg}.rd_overutilized')
+    busiest_cores = read_int(f'{fbg_logmsg}.busiest_cores')
+    local_cores = read_int(f'{fbg_logmsg}.local_cores')
+    return FBGLogMsg(sd_total_load, sd_total_capacity, sd_total_load, sd_prefer_sibling, busiest_stat,
+            local_stat, sched_energy_enabled, rd_perf_domain_exists, rd_overutilized, busiest_cores, local_cores)
 
 
 @dataclass
