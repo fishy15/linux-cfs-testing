@@ -138,8 +138,11 @@ def read_swb_per_cpu_logmsg(per_cpu_msg) -> SWBPerCpuLogMsg:
 @dataclass
 class SWBLogMsg:
     swb_cpus: CpuMask
-    dst_nr_running: int
-    dst_ttwu_pending: int
+    dst_cpu: int
+    cpus: CpuMask
+    dst_nr_running: Optional[int]
+    dst_ttwu_pending: Optional[int]
+    per_cpu_msgs: Optional[List[SWBPerCpuLogMsg]]
     group_balance_mask_sg: CpuMask
     group_balance_cpu_sg: int
 
@@ -573,5 +576,5 @@ if SWK is None:
         file.close()
 else:
     exec('dis 5')
-    print('READY_FOR_SSH')
+    os.system(f'kill -10 {SWK}') # send SIGUSR1 to swk
     exec('c')
