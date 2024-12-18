@@ -470,32 +470,8 @@ def handle_ready():
 
 ## handlers for different types of load balance callers
 
-def handle_rebalance_domains():
-    print('handling rebalance domains...')
+def handle_single_entry():
     ptr = get_slot('rq')
-    
-    if ptr == '0x0':
-        print('it\'s null...')
-        exec('c')
-        return
-    print(ptr)
-    get_logmsg_info(ptr)
-
-def handle_newidle_balance():
-    print('handling newidle balance...')
-    ptr = get_slot('this_rq')
-    
-    if ptr == '0x0':
-        print('it\'s null...')
-        exec('c')
-        return
-    print(ptr)
-    get_logmsg_info(ptr)
-
-def handle_karan_newidle_balance_ret():
-    print('handling karan_newidle_balance_ret...')
-    ptr = read_value('buf')
-    
     if ptr == '0x0':
         print('it\'s null...')
         exec('c')
@@ -525,13 +501,9 @@ def breakpoint_handler(event):
 
         if typ == 1:
             handle_ready()
-        elif typ == 2:
-            handle_rebalance_domains()
-        elif typ == 3:
-            handle_newidle_balance()
+        elif typ in [2, 3]:
+            handle_single_entry()
         elif typ == 4:
-            handle_karan_newidle_balance_ret()
-        elif typ == 5:
             handle_wraparound() # dmup
         else:
             print('oh no')
@@ -541,10 +513,10 @@ gdb.events.stop.connect(breakpoint_handler)
 ## actual script
 
 # connect to remote
-exec('file /l/kbuild/vmlinux')
+exec('file ~/kbuild/vmlinux')
 exec('tar rem :1234')
 
-exec('b karan_log_init:ready')
+exec('b karan_logmsg_ready')
 if SWK is None:
     while ready_count < CORES:
         exec('c')
@@ -552,13 +524,11 @@ if SWK is None:
 
 # once we have made everything ready
 exec('dis 1')
-exec('b rebalance_domains:out')
-exec('b newidle_balance:out')
+exec('b karan_rebalance_domains_ret')
 exec('b karan_newidle_balance_ret')
 
 exec('dis 2')
 exec('dis 3')
-exec('dis 4')
 exec('b karan_msg_alloc_wraparound')
 
 if SWK is None:
@@ -572,6 +542,6 @@ if SWK is None:
         print(json.dumps(total_data, cls=Encoder))
         file.close()
 else:
-    exec('dis 5')
+    exec('dis 4')
     print('READY_FOR_SSH')
     exec('c')

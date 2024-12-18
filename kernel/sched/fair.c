@@ -11555,6 +11555,12 @@ static inline struct karan_logmsg *karan_nb_msg_alloc (struct rq *rq) {
 	return _karan_msg_alloc(rq, NEWIDLE_BALANCE);
 }
 
+static noinline int karan_logmsg_ready(struct karan_logbuf *buf) {
+	volatile int hi = buf ? 0x929382 : 0x210100;
+	hi += 1;
+	return hi ^ hi;
+}
+
 static void karan_log_init (struct rq *rq) {
 	LOG_TOPOLOGY("running karan log init\n");
 
@@ -11566,6 +11572,7 @@ static void karan_log_init (struct rq *rq) {
 	if (sd_count == 0) { return; } else { goto ready; }
 	
 ready:
+	karan_logmsg_ready(logbuf);
 	logbuf->sd_count = sd_count;
 	logbuf->cpu_count = nr_cpu_ids;
 
@@ -12010,6 +12017,12 @@ static inline bool update_newidle_cost(struct sched_domain *sd, u64 cost)
 	return false;
 }
 
+static noinline int karan_rebalance_domains_ret(struct karan_logbuf *buf) {
+	volatile int hi = buf ? 0x999920 : 0x100039;
+	hi += 1;
+	return hi ^ hi;
+}
+
 /*
  * It checks each scheduling domain to see if it is due to be balanced,
  * and initiates a balancing operation if so.
@@ -12151,6 +12164,7 @@ out:
 	if (likely(update_next_balance))
 		rq->next_balance = next_balance;
 
+	karan_rebalance_domains_ret(&rq->cfs.karan_logbuf);
 }
 
 static inline int on_null_domain(struct rq *rq)
@@ -12863,6 +12877,7 @@ out:
 
 	rq_repin_lock(this_rq, rf);
 
+	karan_newidle_balance_ret(&this_rq->cfs.karan_logbuf);
 	return pulled_task;
 }
 
