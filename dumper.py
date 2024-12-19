@@ -138,23 +138,37 @@ def read_swb_per_cpu_logmsg(per_cpu_msg) -> SWBPerCpuLogMsg:
 @dataclass
 class SWBLogMsg:
     swb_cpus: CpuMask
-    dst_nr_running: int
-    dst_ttwu_pending: int
-    group_balance_mask_sg: CpuMask
-    group_balance_cpu_sg: int
+    dst_cpu: int
+    cpus: CpuMask
+    idle: Optional[int]
+    dst_nr_running: Optional[int]
+    dst_ttwu_pending: Optional[int]
+    per_cpus_msgs: Optional[List[SWBPerCpuLogMsg]]
+    group_balance_mask_sg: Optional[CpuMask]
+    group_balance_cpu_sg: Optional[int]
 
 def read_swb_logmsg(swb_logmsg) -> SWBLogMsg:
-    swb_cpus = read_if_not_null(f'{swb_logmsg}.swb_cpus', read_cpumask)
-    dst_nr_running = read_int(f'{swb_logmsg}.dst_nr_running')
-    dst_ttwu_pending = read_int(f'{swb_logmsg}.dst_ttwu_pending')
-    group_balance_mask_sg = read_if_not_null(f'{swb_logmsg}.group_balance_mask_sg', read_cpumask)
-    group_balance_cpu_sg = read_int(f'{swb_logmsg}.group_balance_cpu_sg')
+    swb_cpus = read_cpumask(f'{swb_logmsg}.swb_cpus')
+    dst_cpu = read_int(f'{swb_logmsg}.dst_cpu')
+    cpus = read_cpumask(f'{swb_logmsg}.cpus')
+
+    went_forward = read_bool(f'{swb_logmsg}.went_forward')
+    idle = read_int(f'{swb_logmsg}.idle') if went_forward else None
+    
+    next_two_checked = read_bool(f'{swb_logmsg}.next_two_checked')
+    dst_nr_running = read_int(f'{swb_logmsg}.dst_nr_running') if next_two_checked else None
+    dst_ttwu_pending = read_int(f'{swb_logmsg}.dst_ttwu_pending') if next_two_checked else None
 
     num_entries = read_int(f'{swb_logmsg}.next_per_cpu_msg_slot - {swb_logmsg}.per_cpu_msgs')
     print('NUM ENTRIES:', num_entries)
     per_cpu_msgs = [read_swb_per_cpu_logmsg(f'{swb_logmsg}.per_cpu_msgs[{i}]') for i in range(num_entries)]
+    
+    reached_end = read_bool(f'{swb_logmsg}.reached_end')
+    group_balance_mask_sg = read_cpumask(f'{swb_logmsg}.group_balance_mask_sg') if reached_end else None
+    group_balance_cpu_sg = read_int(f'{swb_logmsg}.group_balance_cpu_sg') if reached_end else None
 
-    return SWBLogMsg(swb_cpus, dst_nr_running, dst_ttwu_pending, group_balance_mask_sg, group_balance_cpu_sg)
+    return SWBLogMsg(swb_cpus, dst_cpu, cpus, idle, dst_nr_running, dst_ttwu_pending, per_cpu_msgs, 
+            group_balance_mask_sg, group_balance_cpu_sg)
 
 class GroupType(Enum):
     group_has_spare = 0
@@ -513,7 +527,7 @@ gdb.events.stop.connect(breakpoint_handler)
 ## actual script
 
 # connect to remote
-exec('file ~/kbuild/vmlinux')
+exec('file ~/rsch/kbuild/vmlinux')
 exec('tar rem :1234')
 
 exec('b karan_logmsg_ready')
