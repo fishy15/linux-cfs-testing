@@ -157,7 +157,7 @@ def read_swb_logmsg(swb_logmsg) -> SWBLogMsg:
     print('NUM ENTRIES:', num_entries)
     per_cpu_msgs = [read_swb_per_cpu_logmsg(f'{swb_logmsg}.per_cpu_msgs[{i}]') for i in range(num_entries)]
 
-    return SWBLogMsg(swb_cpus, dst_nr_running, dst_ttwu_pending, group_balance_mask_sg, group_balance_cpu_sg)
+    return SWBLogMsg(swb_cpus, dst_nr_running, dst_ttwu_pending, group_balance_mask_sg, group_balance_cpu_sg, None, None, None)
 
 class GroupType(Enum):
     group_has_spare = 0
@@ -401,6 +401,11 @@ try:
 except:
     PORT = 1234
 
+try:
+    LOUD
+except:
+    LOUD = False
+    
 # print config to user
 print('TOPOLOGY:', TOPOLOGY)
 print('CORES:', CORES)
@@ -412,7 +417,8 @@ print('PORT:', PORT)
 ## Command to interact with GDB
 
 def exec(cmd):
-    print(cmd)
+    if LOUD is True:
+        print(cmd)
     gdb.execute(cmd)
 
 def exec_capture_output(cmd):
@@ -479,32 +485,8 @@ def handle_ready():
 
 ## handlers for different types of load balance callers
 
-def handle_rebalance_domains():
-    print('handling rebalance domains...')
+def handle_single_entry():
     ptr = get_slot('rq')
-    
-    if ptr == '0x0':
-        print('it\'s null...')
-        exec('c')
-        return
-    print(ptr)
-    get_logmsg_info(ptr)
-
-def handle_newidle_balance():
-    print('handling newidle balance...')
-    ptr = get_slot('this_rq')
-    
-    if ptr == '0x0':
-        print('it\'s null...')
-        exec('c')
-        return
-    print(ptr)
-    get_logmsg_info(ptr)
-
-def handle_karan_newidle_balance_ret():
-    print('handling karan_newidle_balance_ret...')
-    ptr = read_value('buf')
-    
     if ptr == '0x0':
         print('it\'s null...')
         exec('c')
@@ -521,7 +503,7 @@ def handle_wraparound():
     print('NUM ENTRIES:', num_entries)
     data = [get_logmsg_info(get_slot('rq', i)) for i in range(num_entries)]
     total_data.extend(data)
-    if FILE is not None:
+    if FILE is not None and SWK is None:
         with open(FILE, 'w') as f:
             json.dump(total_data, f, cls=Encoder)
             print(len(total_data))
@@ -534,26 +516,35 @@ def breakpoint_handler(event):
 
         if typ == 1:
             handle_ready()
-        elif typ == 2:
-            handle_rebalance_domains()
-        elif typ == 3:
-            handle_newidle_balance()
+        elif typ in [2, 3]:
+            handle_single_entry()
         elif typ == 4:
-            handle_karan_newidle_balance_ret()
-        elif typ == 5:
             handle_wraparound() # dmup
         else:
             print('oh no')
 
+def run_swk():
+    print('IN SWK HANDLER')
+    print(f'SWK {SWK} ITERS {ITERS}')
+    exec('en 4')
+    for i in range(ITERS):
+        print(f'running iter {i}')
+        exec('c')
+    with open(FILE, 'w') as f:
+        json.dump(total_data, f, cls=Encoder)
+    exec('q')
+            
 gdb.events.stop.connect(breakpoint_handler)
 
 ## actual script
 
 # connect to remote
+
+exec('set pagination off')
 exec('file ~/rsch/kbuild/vmlinux')
 exec(f'tar rem :{PORT}')
 
-exec('b karan_log_init:ready')
+exec('b karan_logmsg_ready')
 if SWK is None:
     while ready_count < CORES:
         exec('c')
@@ -561,13 +552,11 @@ if SWK is None:
 
 # once we have made everything ready
 exec('dis 1')
-exec('b rebalance_domains:out')
-exec('b newidle_balance:out')
+exec('b karan_rebalance_domains_ret')
 exec('b karan_newidle_balance_ret')
 
 exec('dis 2')
 exec('dis 3')
-exec('dis 4')
 exec('b karan_msg_alloc_wraparound')
 
 if SWK is None:
@@ -581,6 +570,7 @@ if SWK is None:
         print(json.dumps(total_data, cls=Encoder))
         file.close()
 else:
-    exec('dis 5')
+    exec('dis 4')
     os.system(f'kill -10 {SWK}') # send SIGUSR1 to swk
     exec('c')
+    

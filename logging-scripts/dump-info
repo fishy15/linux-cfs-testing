@@ -18,6 +18,7 @@ else
 fi
 
 if [ -z $ATTACH ]; then
-	ps aux | grep qemu | grep -v grep | awk '{print $2}' | xargs kill -9
+	echo `ps aux | grep "$USER" | grep qemu | grep -v grep`
+	ps aux | grep "$USER" | grep qemu | grep -v grep | awk '{print $2}' | xargs kill -9
 fi
 

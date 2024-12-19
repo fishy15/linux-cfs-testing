@@ -9,6 +9,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <libssh/libssh.h>
@@ -30,6 +31,8 @@ char *cmd;
 ssh_session sesh;
 int gdb_port = 1234;
 int ssh_port = 2222;
+int iters = 1;
+int nwait = 3;
 
 void run_ssh () {
     char portarg[1024];
@@ -51,8 +54,9 @@ void run_ssh () {
 
 void cleanup (int code) {
     //if (grep) (printf("killing grep [pid %d]\n", grep), kill(grep, 9));
+    //if (gdb) (printf("killing gdb [pid %d]\n", gdb), kill(gdb, 2), sleep(1), kill(gdb, 3));
     if (gdb) (printf("killing gdb [pid %d]\n", gdb), kill(gdb, 9));
-    if (ssh) (printf("killing ssh [pid %d]\n", ssh), kill(ssh, 9));
+    if (ssh) (printf("killing ssh [pid %d]\n", ssh), kill(ssh, 2));
     printf("exiting--bye!\n");
     exit(code);
 }
@@ -62,11 +66,14 @@ void handle_sig (int sig) {
         printf("====lets do this====\n");
 
         run_ssh();
-        sleep(1); // let the workload get ready
+        sleep(nwait); // let the workload get ready
         kill(gdb, 2); // gdb int
-        CHECK_EQ(write(p0[1], "en 5\n", 5), 5);
-        CHECK_EQ(write(p0[1], "c\n", 2), 2);
-
+        //CHECK_EQ(write(p0[1], "en 4\n", 5), 5);
+        //CHECK_EQ(write(p0[1], "c\n", 2), 2);
+        CHECK_EQ(write(p0[1], "py run_swk()\n", 13), 13);
+        
+        waitpid(gdb, NULL, 0);
+        kill(ssh, 2);
         printf("====this is done, returning====\n");
     } else {
         printf("signal %d received\n", sig);
@@ -91,6 +98,10 @@ void run_gdb (pid_t ppid) {
     bzero(portarg, 1024);
     snprintf(portarg, 1024, "py PORT=\"%d\"", gdb_port);
 
+    char iterarg[1024];
+    bzero(iterarg, 1024);
+    snprintf(iterarg, 1024, "py ITERS=\"%d\"", iters);
+
     char rslv[PATH_MAX];
     char to_rslv[PATH_MAX];
     char *home = getenv("HOME");
@@ -110,6 +121,8 @@ void run_gdb (pid_t ppid) {
           swkarg,
           "-ex",
           portarg,
+          "-ex",
+          iterarg,
           "-x",
           "../kernel/dumper.py",
           NULL);
@@ -141,18 +154,32 @@ int main (int argc, char **argv) {
         fprintf(stderr, "usage: %s outfile cmd\n", argv[0]);
         return 1;
     }
+
     topo = getenv("TOPOLOGY");
     if (topo == NULL) topo = "2";
-    outfile = argv[1];
+
+    char cwd[PATH_MAX];
+    CHECK_NE(getcwd(cwd, PATH_MAX), NULL);
+    outfile = (char *) malloc(PATH_MAX);
+    snprintf(outfile, PATH_MAX, "%s/%s", cwd, argv[1]);
+    
     cmd = argv[2];
 
     char *_gdb_port = getenv("GDB");
     if (_gdb_port) gdb_port = strtol(_gdb_port, NULL, 10);
+
     char *_ssh_port = getenv("SSH");
     if (_ssh_port) ssh_port = strtol(_ssh_port, NULL, 10);
 
+    char *_iters = getenv("ITERS");
+    if (_iters) iters = strtol(_iters, NULL, 10);
+
+    char *_nwait = getenv("NWAIT");
+    if (_nwait) nwait = strtol(_nwait, NULL, 10);
+    
     printf("gdb_port is %d\n", gdb_port);
     printf("ssh_port is %d\n", ssh_port);
+    printf("outfile is %s\n", outfile);
     printf("cmd is %s\n", cmd);
     
     // register cleanup handler
@@ -177,5 +204,5 @@ int main (int argc, char **argv) {
     pause();
 
     printf("====unpause====\n");
-    pause();
+    printf("done!\n");
 }
