@@ -396,12 +396,18 @@ try:
 except:
     SWK = None
 
+try:
+    PORT
+except:
+    PORT = 1234
+
 # print config to user
 print('TOPOLOGY:', TOPOLOGY)
 print('CORES:', CORES)
 print('FILE:', FILE)
 print('ITERS:', ITERS)
 print('SWK:', SWK)
+print('PORT:', PORT)
 
 ## Command to interact with GDB
 
@@ -544,8 +550,8 @@ gdb.events.stop.connect(breakpoint_handler)
 ## actual script
 
 # connect to remote
-exec('file /l/kbuild/vmlinux')
-exec('tar rem :1234')
+exec('file ~/rsch/kbuild/vmlinux')
+exec(f'tar rem :{PORT}')
 
 exec('b karan_log_init:ready')
 if SWK is None:

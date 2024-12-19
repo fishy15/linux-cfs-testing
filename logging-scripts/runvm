@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 set -x
 if [ -z $1 ]; then
@@ -38,7 +38,8 @@ qemu-system-x86_64 \
     -append "root=$drive rw console=tty0 console=ttyS0,115200n8 sched_verbose" \
     -kernel kbuild/arch/x86/boot/bzImage \
     -accel tcg,thread=single \
-    -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+    -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::$SSH-:22 \
+    -gdb tcp::$GDB \
     $topology
 
 #     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
