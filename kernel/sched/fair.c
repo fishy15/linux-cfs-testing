@@ -8895,29 +8895,52 @@ struct karan_fbg_logmsg {
 };
 
 struct karan_fbq_per_cpu_logmsg {
-    int cpu_id;
-    
-    unsigned int rq_nr_running;
-    unsigned int rq_nr_numa_running;
-    unsigned int rq_nr_preferred_running;
-    unsigned int rq_cfs_h_nr_running; // done
-    unsigned long capacity; // done
-    bool is_core_idle;
-    int arch_asym_cpu_priority;
-    unsigned long cpu_load; // done
-    unsigned long cpu_util_cfs_boost; // done
-    int rq_cpu_capacity;
-    int sd_imbalance_pct;
-    int arch_scale_cpu_capacity;
+	int cpu_id;
+
+	// not measured because no numa balancing
+	// unsigned int rq_nr_running;
+	// unsigned int rq_nr_numa_running;
+	// unsigned int rq_nr_preferred_running;
+
+	enum fbq_type rq_type;
+	bool past_rq_type;
+	
+	unsigned int rq_cfs_h_nr_running;
+	bool past_nr_running;
+
+	unsigned long capacity;
+	bool past_capacity_check;
+
+	int arch_asym_cpu_priority;
+	bool past_prio_check;
+
+	enum migration_type migration_type;
+
+	// set if migration type is load
+	unsigned long cpu_load;
+	int rq_cpu_capacity;
+	int arch_scale_cpu_capacity;
+	int sd_imbalance_pct;
+
+	// set if migration type is util
+	unsigned long cpu_util_cfs_boost;
+
+	// set if migration type is misfit
+	unsigned long rq_misfit_task_load;
 };
 
 struct karan_fbq_logmsg {
-    unsigned long capacity_dst_cpu; // ????
-    bool sched_smt_active;
-    int arch_asym_cpu_priority_dst_cpu;
-    
-    struct karan_fbq_per_cpu_logmsg *per_cpu_msgs;
-    struct karan_fbq_per_cpu_logmsg *next_per_cpu_msg_slot;
+	bool capacity_dst_cpu_set;
+	unsigned long capacity_dst_cpu;
+
+	bool sched_smt_active_set;
+	bool sched_smt_active;
+
+	bool arch_asym_cpu_priority_dst_cpu_set;
+	int arch_asym_cpu_priority_dst_cpu;
+	
+	struct karan_fbq_per_cpu_logmsg *per_cpu_msgs;
+	struct karan_fbq_per_cpu_logmsg *next_per_cpu_msg_slot;
 };
 
 struct karan_lb_logmsg {
@@ -11209,6 +11232,10 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 	unsigned int busiest_nr = 0;
 	int i;
 
+	SET_IF_NOT_NULL(fbq_logmsg, capacity_dst_cpu_set, false);
+	SET_IF_NOT_NULL(fbq_logmsg, sched_smt_active_set, false);
+	SET_IF_NOT_NULL(fbq_logmsg, arch_asym_cpu_priority_dst_cpu_set, false);
+
 	for_each_cpu_and(i, sched_group_span(group), env->cpus) {
 		struct karan_fbq_per_cpu_logmsg *per_cpu_logmsg = ACQUIRE_PER_CPU_LOGMSG(fbq_logmsg, i);
 	
@@ -11216,8 +11243,19 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 		unsigned int nr_running;
 		enum fbq_type rt;
 
+		// set codepath
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_rq_type, false);
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_nr_running, false);
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_capacity_check, false);
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_prio_check, false);
+
 		rq = cpu_rq(i);
 		rt = fbq_classify_rq(rq);
+
+		// SET_IF_NOT_NULL(per_cpu_logmsg, rq_nr_running, rq->nr_running);
+		// SET_IF_NOT_NULL(per_cpu_logmsg, rq_nr_numa_running, rq->nr_numa_running);
+		// SET_IF_NOT_NULL(per_cpu_logmsg, rq_nr_preferred_running, rq->nr_preferred_running);
+		SET_IF_NOT_NULL(per_cpu_logmsg, rq_type, rt);
 
 		/*
 		 * We classify groups/runqueues into three groups:
@@ -11241,10 +11279,14 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 		if (rt > env->fbq_type)
 			continue;
 
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_rq_type, false);
+
 		nr_running = rq->cfs.h_nr_running;
 		SET_IF_NOT_NULL(per_cpu_logmsg, rq_cfs_h_nr_running, nr_running);
 		if (!nr_running)
 			continue;
+
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_nr_running, true);
 
 		capacity = capacity_of(i);
 		SET_IF_NOT_NULL(per_cpu_logmsg, capacity, capacity);
@@ -11255,10 +11297,17 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 		 * Higher per-CPU capacity is considered better than balancing
 		 * average load.
 		 */
+
+		// not always set but will just say it is always set if it reaches here
+		SET_IF_NOT_NULL(fbq_logmsg, capacity_dst_cpu_set, true);
+		SET_IF_NOT_NULL(fbq_logmsg, capacity_dst_cpu, capacity_of(env->dst_cpu));
+
 		if (env->sd->flags & SD_ASYM_CPUCAPACITY &&
 		    !capacity_greater(capacity_of(env->dst_cpu), capacity) &&
 		    nr_running == 1)
 			continue;
+
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_capacity_check, true);
 
 		/*
 		 * Make sure we only pull tasks from a CPU of lower priority
@@ -11267,11 +11316,21 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 		 * If balancing between cores, let lower priority CPUs help
 		 * SMT cores with more than one busy sibling.
 		 */
+
+		// not always set but will just say it is always set if it reaches here
+		SET_IF_NOT_NULL(fbq_logmsg, sched_smt_active_set, true);
+		SET_IF_NOT_NULL(fbq_logmsg, sched_smt_active, sched_smt_active());
+		SET_IF_NOT_NULL(fbq_logmsg, arch_asym_cpu_priority_dst_cpu_set, true);
+		SET_IF_NOT_NULL(fbq_logmsg, arch_asym_cpu_priority_dst_cpu, arch_asym_cpu_priority(env->dst_cpu));
+		SET_IF_NOT_NULL(per_cpu_logmsg, arch_asym_cpu_priority, arch_asym_cpu_priority(i));
+
 		if ((env->sd->flags & SD_ASYM_PACKING) &&
 		    sched_use_asym_prio(env->sd, i) &&
 		    sched_asym_prefer(i, env->dst_cpu) &&
 		    nr_running == 1)
 			continue;
+
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_prio_check, true);
 
 		switch (env->migration_type) {
 		case migrate_load:
@@ -11281,6 +11340,9 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 			 */
 			load = cpu_load(rq);
 			SET_IF_NOT_NULL(per_cpu_logmsg, cpu_load, load);
+			SET_IF_NOT_NULL(per_cpu_logmsg, rq_cpu_capacity, rq->cpu_capacity);
+			SET_IF_NOT_NULL(per_cpu_logmsg, arch_scale_cpu_capacity, arch_scale_cpu_capacity(cpu_of(rq)));
+			SET_IF_NOT_NULL(per_cpu_logmsg, sd_imbalance_pct, env->sd->imbalance_pct);
 	    
 			if (nr_running == 1 && load > env->imbalance &&
 			    !check_cpu_capacity(rq, env->sd))
@@ -11336,6 +11398,7 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 			 * For ASYM_CPUCAPACITY domains with misfit tasks we
 			 * simply seek the "biggest" misfit task.
 			 */
+			SET_IF_NOT_NULL(per_cpu_logmsg, rq_misfit_task_load, rq->misfit_task_load);
 			if (rq->misfit_task_load > busiest_load) {
 				busiest_load = rq->misfit_task_load;
 				busiest = rq;
