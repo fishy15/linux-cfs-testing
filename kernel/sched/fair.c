@@ -8880,13 +8880,16 @@ struct karan_fbg_logmsg {
 	unsigned long sd_total_capacity;
 	unsigned long sd_avg_load;
 	unsigned int sd_prefer_sibling;
-	struct sg_lb_stats busiest_stat;
-	struct sg_lb_stats local_stat;
+	struct sg_lb_stats busiest_stat;  // we will assume every value is read
+	struct sg_lb_stats local_stat;  // we will assume every value is read
+	bool past_init;
+	bool past_busiest_cores;
 	bool sched_energy_enabled;
+	bool set_rd_values;
 	bool rd_perf_domain_exists;
 	bool rd_overutilized;
-	int busiest_cores;
-	int local_cores;
+	bool maybe_balancing;
+	long env_imbalance;
 	// int ret_migration_type;
 	// int ret_imbalance;
 };
@@ -11045,6 +11048,11 @@ static struct sched_group *find_busiest_group(struct lb_env *env, struct karan_f
 	 */
 	update_sd_lb_stats(env, &sds);
 
+	// set codepath variables
+	SET_IF_NOT_NULL(msg, past_busiest_cores, false);
+	SET_IF_NOT_NULL(msg, set_rd_values, false);
+	SET_IF_NOT_NULL(msg, maybe_balancing, false);
+
 	// copy values into logmsg
 	SET_IF_NOT_NULL(msg, sd_total_load, sds.total_load);
 	SET_IF_NOT_NULL(msg, sd_total_capacity, sds.total_capacity);
@@ -11054,13 +11062,10 @@ static struct sched_group *find_busiest_group(struct lb_env *env, struct karan_f
 		memcpy(&msg->busiest_stat, &sds.busiest_stat, sizeof sds.busiest_stat);
 		memcpy(&msg->local_stat, &sds.local_stat, sizeof sds.local_stat);
 	}
-	SET_IF_NOT_NULL(msg, local_cores, sds.local->cores);
 
 	/* There is no busy sibling group to pull tasks from */
 	if (!sds.busiest)
 		goto out_balanced;
-
-	SET_IF_NOT_NULL(msg, busiest_cores, sds.busiest->cores);
 
 	busiest = &sds.busiest_stat;
 
@@ -11068,12 +11073,16 @@ static struct sched_group *find_busiest_group(struct lb_env *env, struct karan_f
 	if (busiest->group_type == group_misfit_task)
 		goto force_balance;
 
+	SET_IF_NOT_NULL(msg, past_busiest_cores, true);
 	SET_IF_NOT_NULL(msg, sched_energy_enabled, sched_energy_enabled());
+
 	if (sched_energy_enabled()) {
 		struct root_domain *rd = env->dst_rq->rd;
 
+		SET_IF_NOT_NULL(msg, set_rd_values, true);
 		SET_IF_NOT_NULL(msg, rd_perf_domain_exists, rcu_dereference(rd->pd) != NULL);
 		SET_IF_NOT_NULL(msg, rd_overutilized, rd->overutilized);
+
 		if (rcu_dereference(rd->pd) && !READ_ONCE(rd->overutilized))
 			goto out_balanced;
 	}
@@ -11179,6 +11188,8 @@ static struct sched_group *find_busiest_group(struct lb_env *env, struct karan_f
 force_balance:
 	/* Looks like there is an imbalance. Compute it */
 	calculate_imbalance(env, &sds);
+	SET_IF_NOT_NULL(msg, maybe_balancing, true);
+	SET_IF_NOT_NULL(msg, env_imbalance, env->imbalance);
 	return env->imbalance ? sds.busiest : NULL;
 
 out_balanced:
