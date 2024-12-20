@@ -8853,17 +8853,26 @@ struct karan_swb_per_cpu_logmsg {
 };
 
 struct karan_swb_logmsg {
-	struct cpumask *swb_cpus;
-	// int dst_cpu;
-	// int cpus;
-	// int idle;
+	struct cpumask swb_cpus;
+	int dst_cpu;
+	struct cpumask cpus;
+
+	bool went_forward;
+	int idle;
+
+	// if true, then the next two values are checked, and only these values
+	// otherwise, we skip them and keep going
+	bool next_two_checked;
 	int dst_nr_running;
 	int dst_ttwu_pending;
-	struct cpumask *group_balance_mask_sg;
-	int group_balance_cpu_sg;
 
 	struct karan_swb_per_cpu_logmsg *per_cpu_msgs;
 	struct karan_swb_per_cpu_logmsg *next_per_cpu_msg_slot;
+
+	// marked if we dont return in the previous block
+	bool reached_end;
+	struct cpumask group_balance_mask_sg;
+	int group_balance_cpu_sg;
 };
 
 struct karan_fbg_logmsg {
@@ -11424,7 +11433,17 @@ static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_lo
 	struct sched_group *sg = env->sd->groups;
 	int cpu, idle_smt = -1;
 
-	SET_IF_NOT_NULL(swb_logmsg, swb_cpus, swb_cpus);
+	// set all the path variables
+	SET_IF_NOT_NULL(swb_logmsg, went_forward, false);
+	SET_IF_NOT_NULL(swb_logmsg, next_two_checked, false);
+	SET_IF_NOT_NULL(swb_logmsg, reached_end, false);
+
+	if (swb_logmsg != NULL) {
+		cpumask_copy(&swb_logmsg->swb_cpus, swb_cpus);
+		cpumask_copy(&swb_logmsg->cpus, env->cpus);
+	}
+	SET_IF_NOT_NULL(swb_logmsg, dst_cpu, env->dst_cpu);
+
 
 	/*
 	 * Ensure the balancing environment is consistent; can happen
@@ -11432,6 +11451,8 @@ static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_lo
 	 */
 	if (!cpumask_test_cpu(env->dst_cpu, env->cpus))
 		return 0;
+
+	SET_IF_NOT_NULL(swb_logmsg, went_forward, true);
 
 	/*
 	 * In the newly idle case, we will allow all the CPUs
@@ -11441,6 +11462,7 @@ static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_lo
 	 * to optimize wakeup latency.
 	 */
 	if (env->idle == CPU_NEWLY_IDLE) {
+		SET_IF_NOT_NULL(swb_logmsg, next_two_checked, true);
 		SET_IF_NOT_NULL(swb_logmsg, dst_nr_running, env->dst_rq->nr_running);
 		SET_IF_NOT_NULL(swb_logmsg, dst_ttwu_pending, env->dst_rq->ttwu_pending);
 		if (env->dst_rq->nr_running > 0 || env->dst_rq->ttwu_pending)
@@ -11448,11 +11470,7 @@ static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_lo
 		return 1;
 	}
 
-
 	cpumask_copy(swb_cpus, group_balance_mask(sg));
-	if (swb_logmsg != NULL) {
-		cpumask_copy(swb_logmsg->swb_cpus, swb_cpus);
-	}
 
 	/* Try to find first idle CPU */
 	for_each_cpu_and(cpu, swb_cpus, env->cpus) {
@@ -11493,7 +11511,12 @@ static int should_we_balance(struct lb_env *env, struct karan_swb_logmsg *swb_lo
 	if (idle_smt != -1)
 		return idle_smt == env->dst_cpu;
 
+	SET_IF_NOT_NULL(swb_logmsg, reached_end, true);
+
 	/* Are we the first CPU of this group ? */
+	if (swb_logmsg != NULL) {
+		cpumask_copy(&swb_logmsg->group_balance_mask_sg, group_balance_mask(sg));
+	}
 	SET_IF_NOT_NULL(swb_logmsg, group_balance_cpu_sg, group_balance_cpu(sg));
 	return group_balance_cpu(sg) == env->dst_cpu;
 }
