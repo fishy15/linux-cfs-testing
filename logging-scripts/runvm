@@ -8,10 +8,10 @@ if [ -z $1 ]; then
     exit 1
 fi
 
-if [ -z $CORES ]; then
+if [ -z "$TOPOLOGY" ]; then
     echo "using a default number of 2 cores"
     topology="-smp cpus=2"
-elif [ "$CORES" = "16-tiered" ]; then
+elif [ "$TOPOLOGY" = "16-tiered" ]; then
     topology="\
         -object memory-backend-ram,size=1G,id=m0 \
         -object memory-backend-ram,size=1G,id=m1 \
@@ -23,7 +23,7 @@ elif [ "$CORES" = "16-tiered" ]; then
         -numa node,cpus=12-15,nodeid=3,memdev=m3 \
         -smp cpus=16"
 else
-    topology="-smp cpus=$CORES"
+    topology="-smp cpus=$TOPOLOGY"
 fi
 
 echo "$1" | grep -e "\.qcow2$" -e '\.q$' > /dev/null
