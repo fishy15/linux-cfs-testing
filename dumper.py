@@ -295,14 +295,14 @@ def read_fbq_per_cpu_logmsg(msg) -> FBQPerCpuLogMsg:
 
     migration_type = read_migration_type(f'{msg}.migration_type') if past_prio_check else None
 
-    cpu_load = read_int(f'{msg}.cpu_load') if migrate_type == MigrationType.migrate_load else None
-    rq_cpu_capacity = read_int(f'{msg}.rq_cpu_capacity') if migrate_type == MigrationType.migrate_load else None
-    arch_scale_cpu_capacity = read_int(f'{msg}.arch_scale_cpu_capacity') if migrate_type == MigrationType.migrate_load else None
-    sd_imbalance_pct = read_int(f'{msg}.sd_imbalance_pct') if migrate_type == MigrationType.migrate_load else None
+    cpu_load = read_int(f'{msg}.cpu_load') if migration_type == MigrationType.migrate_load else None
+    rq_cpu_capacity = read_int(f'{msg}.rq_cpu_capacity') if migration_type == MigrationType.migrate_load else None
+    arch_scale_cpu_capacity = read_int(f'{msg}.arch_scale_cpu_capacity') if migration_type == MigrationType.migrate_load else None
+    sd_imbalance_pct = read_int(f'{msg}.sd_imbalance_pct') if migration_type == MigrationType.migrate_load else None
 
-    cpu_util_cfs_boost = read_int(f'{msg}.cpu_util_cfs_boost') if migrate_type == MigrationType.migrate_util else None
+    cpu_util_cfs_boost = read_int(f'{msg}.cpu_util_cfs_boost') if migration_type == MigrationType.migrate_util else None
 
-    rq_misfit_task_load = read_int(f'{msg}.rq_misfit_task_load') if migrate_type == MigrationType.migrate_misfit else None
+    rq_misfit_task_load = read_int(f'{msg}.rq_misfit_task_load') if migration_type == MigrationType.migrate_misfit else None
 
     return FBQPerCpuLogMsg(cpu_id, rq_type, rq_cfs_h_nr_running, capacity, arch_asym_cpu_priority, migration_type, 
             cpu_load, rq_cpu_capacity, arch_scale_cpu_capacity, sd_imbalance_pct, cpu_util_cfs_boost,
@@ -319,9 +319,17 @@ class FBQLogMsg:
 def read_fbq_logmsg(fbq_logmsg) -> FBQLogMsg:
     capacity_dst_cpu_set = read_bool(f'{fbq_logmsg}.capacity_dst_cpu_set')
     capacity_dst_cpu = read_int(f'{fbq_logmsg}.capacity_dst_cpu') if capacity_dst_cpu_set else None
+    exec_capture_output(f'ptype {fbq_logmsg}.capacity_dst_cpu_set')
+    exec_capture_output(f'ptype {fbq_logmsg}.capacity_dst_cpu')
+    exec_capture_output(f'p/t {fbq_logmsg}.capacity_dst_cpu_set')
+    exec_capture_output(f'p/t {fbq_logmsg}.capacity_dst_cpu')
 
     sched_smt_active_set = read_bool(f'{fbq_logmsg}.sched_smt_active_set')
-    sched_smt_active = read_bool(f'{fbq_logmsg}.sched_smt_active') if sched_smt_active_set else None
+    sched_smt_active = read_bool(f'(bool) ({fbq_logmsg}.sched_smt_active)') if sched_smt_active_set else None
+    exec_capture_output(f'ptype {fbq_logmsg}.sched_smt_active_set')
+    exec_capture_output(f'ptype {fbq_logmsg}.sched_smt_active')
+    exec_capture_output(f'p/t {fbq_logmsg}.sched_smt_active_set')
+    exec_capture_output(f'p/t {fbq_logmsg}.sched_smt_active')
 
     arch_asym_cpu_priority_dst_cpu_set = read_bool(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu_set')
     arch_asym_cpu_priority_dst_cpu = read_int(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu') if arch_asym_cpu_priority_dst_cpu_set else None
@@ -458,6 +466,7 @@ def exec(cmd):
 def exec_capture_output(cmd):
     print(cmd)
     output = gdb.execute(cmd, False, True).strip()
+    print(output)
     return output
 
 ## helper functions to extract information out 
@@ -534,6 +543,7 @@ def handle_wraparound():
     # dump whole buffer
     buf = 'rq->cfs.karan_logbuf'
     num_entries = read_int(f'sizeof({buf}.msgs) / sizeof(*{buf}.msgs)')
+    num_entries = 4  # TODO: remove
     print('NUM ENTRIES:', num_entries)
     data = [get_logmsg_info(get_slot('rq', i)) for i in range(num_entries)]
     total_data.extend(data)
