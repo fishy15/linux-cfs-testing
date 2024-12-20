@@ -5,7 +5,7 @@ set -x
 cd "$(dirname "$0")/.."
 
 if [ -z $ATTACH ]; then
-	TOPOLOGY="$TOPOLOGY" runvm lfs -s -S  >/dev/null 2>&1 &
+	TOPOLOGY="$TOPOLOGY" runvm lfs -s -S >/dev/null 2>&1 &
 fi
 
 if [ ! -z $FILE ]; then
@@ -14,7 +14,9 @@ if [ ! -z $FILE ]; then
 		-ex "py FILE=\"$FILE\"" \
 		-x kernel/dumper.py
 else
-	gdb kbuild/vmlinux --quiet -ex "py TOPOLOGY=\"$TOPOLOGY\"" -x kernel/dumper.py
+	gdb kbuild/vmlinux --quiet \
+		-ex "py TOPOLOGY=\"$TOPOLOGY\"" \
+		-x kernel/dumper.py
 fi
 
 if [ -z $ATTACH ]; then

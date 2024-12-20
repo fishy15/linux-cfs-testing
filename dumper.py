@@ -267,47 +267,64 @@ def read_fbg_logmsg(fbg_logmsg) -> FBGLogMsg:
 @dataclass
 class FBQPerCpuLogMsg:
     cpu_id: int
-    rq_nr_running: int
-    rq_nr_preferred_running: int
-    rq_cfs_h_nr_running: int
-    capacity: int
-    is_core_idle: bool
-    arch_asym_cpu_priority: int
-    cpu_load: int
-    cpu_util_cfs_boost: int
-    rq_cpu_capacity: int
-    sd_imbalance_pct: int
-    arch_scale_cpu_capacity: int
+    rq_type: FBQType
+    rq_cfs_h_nr_running: Optional[int]
+    capacity: Optional[int]
+    arch_asym_cpu_priority: Optional[int]
+    migration_type: Optional[MigrationType]
+    cpu_load: Optional[int]
+    rq_cpu_capacity: Optional[int]
+    arch_scale_cpu_capacity: Optional[int]
+    sd_imbalance_pct: Optional[int]
+    cpu_util_cfs_boost: Optional[int]
+    rq_misfit_task_load: Optional[int]
 
 def read_fbq_per_cpu_logmsg(msg) -> FBQPerCpuLogMsg:
     cpu_id = read_int(f'{msg}.cpu_id')
-    rq_nr_running = read_int(f'{msg}.rq_nr_running')
-    rq_nr_preferred_running = read_int(f'{msg}.rq_nr_preferred_running')
-    rq_cfs_h_nr_running = read_int(f'{msg}.rq_cfs_h_nr_running')
-    capacity = read_int(f'{msg}.capacity')
-    is_core_idle = read_bool(f'{msg}.is_core_idle')
-    arch_asym_cpu_priority = read_int(f'{msg}.arch_asym_cpu_priority')
-    cpu_load = read_int(f'{msg}.cpu_load')
-    cpu_util_cfs_boost = read_int(f'{msg}.cpu_util_cfs_boost')
-    rq_cpu_capacity = read_int(f'{msg}.rq_cpu_capacity')
-    sd_imbalance_pct = read_int(f'{msg}.sd_imbalance_pct')
-    arch_scale_cpu_capacity = read_int(f'{msg}.arch_scale_cpu_capacity')
-    return FBQPerCpuLogMsg(cpu_id, rq_nr_running, rq_nr_preferred_running, rq_cfs_h_nr_running, capacity, 
-            is_core_idle, arch_asym_cpu_priority, cpu_load, cpu_util_cfs_boost, rq_cpu_capacity, 
-            sd_imbalance_pct, arch_scale_cpu_capacity)
+    rq_type = read_fbq_type(f'{msg}.rq_type')
+    past_rq_type = read_bool(f'{msg}.past_rq_type')
+
+    rq_cfs_h_nr_running = read_int(f'{msg}.rq_cfs_h_nr_running') if past_rq_type else None
+    past_nr_running = read_bool(f'{msg}.past_nr_running')
+
+    capacity = read_int(f'{msg}.capacity') if past_nr_running else None
+    past_capacity_check = read_bool(f'{msg}.past_capacity_check')
+
+    arch_asym_cpu_priority = read_int(f'{msg}.arch_asym_cpu_priority') if past_capacity_check else None
+    past_prio_check = read_bool(f'{msg}.past_prio_check')
+
+    migration_type = read_migration_type(f'{msg}.migration_type') if past_prio_check else None
+
+    cpu_load = read_int(f'{msg}.cpu_load') if migrate_type == MigrationType.migrate_load else None
+    rq_cpu_capacity = read_int(f'{msg}.rq_cpu_capacity') if migrate_type == MigrationType.migrate_load else None
+    arch_scale_cpu_capacity = read_int(f'{msg}.arch_scale_cpu_capacity') if migrate_type == MigrationType.migrate_load else None
+    sd_imbalance_pct = read_int(f'{msg}.sd_imbalance_pct') if migrate_type == MigrationType.migrate_load else None
+
+    cpu_util_cfs_boost = read_int(f'{msg}.cpu_util_cfs_boost') if migrate_type == MigrationType.migrate_util else None
+
+    rq_misfit_task_load = read_int(f'{msg}.rq_misfit_task_load') if migrate_type == MigrationType.migrate_misfit else None
+
+    return FBQPerCpuLogMsg(cpu_id, rq_type, rq_cfs_h_nr_running, capacity, arch_asym_cpu_priority, migration_type, 
+            cpu_load, rq_cpu_capacity, arch_scale_cpu_capacity, sd_imbalance_pct, cpu_util_cfs_boost,
+            rq_misfit_task_load)
 
 
 @dataclass
 class FBQLogMsg:
-    capacity_dst_cpu: int
-    sched_smt_active: bool
-    arch_asym_cpu_priority_dst_cpu: int
+    capacity_dst_cpu: Optional[int]
+    sched_smt_active: Optional[bool]
+    arch_asym_cpu_priority_dst_cpu: Optional[int]
     per_cpu_msgs: List[FBQPerCpuLogMsg]
 
 def read_fbq_logmsg(fbq_logmsg) -> FBQLogMsg:
-    capacity_dst_cpu = read_int(f'{fbq_logmsg}.capacity_dst_cpu')
-    sched_smt_active = read_bool(f'{fbq_logmsg}.sched_smt_active')
-    arch_asym_cpu_priority_dst_cpu = read_int(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu')
+    capacity_dst_cpu_set = read_bool(f'{fbq_logmsg}.capacity_dst_cpu_set')
+    capacity_dst_cpu = read_int(f'{fbq_logmsg}.capacity_dst_cpu') if capacity_dst_cpu_set else None
+
+    sched_smt_active_set = read_bool(f'{fbq_logmsg}.sched_smt_active_set')
+    sched_smt_active = read_bool(f'{fbq_logmsg}.sched_smt_active') if sched_smt_active_set else None
+
+    arch_asym_cpu_priority_dst_cpu_set = read_bool(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu_set')
+    arch_asym_cpu_priority_dst_cpu = read_int(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu') if arch_asym_cpu_priority_dst_cpu_set else None
 
     num_entries = read_int(f'{fbq_logmsg}.next_per_cpu_msg_slot - {fbq_logmsg}.per_cpu_msgs')
     print('NUM ENTRIES:', num_entries)
