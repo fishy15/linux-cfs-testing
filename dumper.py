@@ -542,7 +542,6 @@ def handle_wraparound():
     # dump whole buffer
     buf = 'rq->cfs.karan_logbuf'
     num_entries = read_int(f'sizeof({buf}.msgs) / sizeof(*{buf}.msgs)')
-    num_entries = 4  # TODO: remove
     sd_count = read_int(f'{buf}.sd_count')
     print('NUM ENTRIES:', num_entries)
     print('SD COUNT:', sd_count)
