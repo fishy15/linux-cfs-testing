@@ -236,26 +236,32 @@ class FBGLogMsg:
     sd_prefer_sibling: int
     busiest_stat: SgLbStats
     local_stat: SgLbStats
-    sched_energy_enabled: bool
-    rd_perf_domain_exists: bool
-    rd_overutilized: bool
-    busiest_cores: int
-    local_cores: int
+    sched_energy_enabled: Optional[bool]
+    rd_perf_domain_exists: Optional[bool]
+    rd_overutilized: Optional[bool]
+    env_imbalance: Optional[int]
 
 def read_fbg_logmsg(fbg_logmsg) -> FBGLogMsg:
     sd_total_load = read_int(f'{fbg_logmsg}.sd_total_load')
     sd_total_capacity = read_int(f'{fbg_logmsg}.sd_total_capacity')
-    sd_total_load = read_int(f'{fbg_logmsg}.sd_total_load')
+    sd_avg_load = read_int(f'{fbg_logmsg}.sd_avg_load')
     sd_prefer_sibling = read_int(f'{fbg_logmsg}.sd_prefer_sibling')
     busiest_stat = read_sg_lb_stats(f'{fbg_logmsg}.busiest_stat')
     local_stat = read_sg_lb_stats(f'{fbg_logmsg}.local_stat')
-    sched_energy_enabled = read_bool(f'{fbg_logmsg}.sched_energy_enabled')
-    rd_perf_domain_exists = read_bool(f'{fbg_logmsg}.rd_perf_domain_exists')
-    rd_overutilized = read_bool(f'{fbg_logmsg}.rd_overutilized')
-    busiest_cores = read_int(f'{fbg_logmsg}.busiest_cores')
-    local_cores = read_int(f'{fbg_logmsg}.local_cores')
-    return FBGLogMsg(sd_total_load, sd_total_capacity, sd_total_load, sd_prefer_sibling, busiest_stat,
-            local_stat, sched_energy_enabled, rd_perf_domain_exists, rd_overutilized, busiest_cores, local_cores)
+
+    past_busiest_cores = read_bool(f'{fbg_logmsg}.past_busiest_cores')
+    sched_energy_enabled = read_bool(f'{fbg_logmsg}.sched_energy_enabled') if past_busiest_cores else None
+
+    set_rd_values = read_bool(f'{fbg_logmsg}.set_rd_values')
+    rd_perf_domain_exists = read_bool(f'{fbg_logmsg}.rd_perf_domain_exists') if set_rd_values else None
+    rd_overutilized = read_bool(f'{fbg_logmsg}.rd_overutilized') if set_rd_values else None
+
+    maybe_balancing = read_bool(f'{fbg_logmsg}.maybe_balancing')
+    env_imbalance = read_int(f'{fbg_logmsg}.env_imbalance') if maybe_balancing else None
+
+    return FBGLogMsg(sd_total_load, sd_total_capacity, sd_avg_load, sd_prefer_sibling, 
+            busiest_stat, local_stat, sched_energy_enabled, rd_perf_domain_exists, rd_overutilized,
+            env_imbalance)
 
 
 @dataclass
