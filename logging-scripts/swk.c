@@ -51,6 +51,8 @@ void run_waitfor () {
         execl("/usr/bin/ssh",
               "ssh",
               portarg,
+	      "-o",
+	      "StrictHostKeyChecking=no",
               "-t",
               "k@localhost",
               "stdbuf -o0 waitfor",
