@@ -30,7 +30,7 @@ pid_t ssh_waitfor = 0;
 char *topo;
 char *outfile;
 char *cmd;
-ssh_session sesh;
+//ssh_session sesh;
 int gdb_port = 1234;
 int ssh_port = 2222;
 int iters = 1;
