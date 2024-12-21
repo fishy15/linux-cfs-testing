@@ -143,7 +143,7 @@ class SWBLogMsg:
     idle: Optional[int]
     dst_nr_running: Optional[int]
     dst_ttwu_pending: Optional[int]
-    per_cpus_msgs: Optional[List[SWBPerCpuLogMsg]]
+    per_cpu_msgs: Optional[List[SWBPerCpuLogMsg]]
     group_balance_mask_sg: Optional[CpuMask]
     group_balance_cpu_sg: Optional[int]
 
