@@ -451,12 +451,13 @@ print('PORT:', PORT)
 ## Command to interact with GDB
 
 def exec(cmd):
-    if LOUD is True:
+    if LOUD:
         print(cmd)
     gdb.execute(cmd)
 
 def exec_capture_output(cmd):
-    print(cmd)
+    if LOUD:
+        print(cmd)
     output = gdb.execute(cmd, False, True).strip()
     return output
 
