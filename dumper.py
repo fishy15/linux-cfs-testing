@@ -31,7 +31,7 @@ class SchedDomain:
     pass
 
 def read_sched_domain(sd):
-    print(sd)
+    # print(sd)
     return SchedDomain()
 
 @dataclass
@@ -39,7 +39,7 @@ class ReadyQueue:
     pass
 
 def read_ready_queue(rq):
-    print(rq)
+    # print(rq)
     return ReadyQueue()
 
 @dataclass
@@ -160,7 +160,7 @@ def read_swb_logmsg(swb_logmsg) -> SWBLogMsg:
     dst_ttwu_pending = read_int(f'{swb_logmsg}.dst_ttwu_pending') if next_two_checked else None
 
     num_entries = read_int(f'{swb_logmsg}.next_per_cpu_msg_slot - {swb_logmsg}.per_cpu_msgs')
-    print('NUM ENTRIES:', num_entries)
+    # print('NUM ENTRIES:', num_entries)
     per_cpu_msgs = [read_swb_per_cpu_logmsg(f'{swb_logmsg}.per_cpu_msgs[{i}]') for i in range(num_entries)]
     
     reached_end = read_bool(f'{swb_logmsg}.reached_end')
@@ -319,23 +319,15 @@ class FBQLogMsg:
 def read_fbq_logmsg(fbq_logmsg) -> FBQLogMsg:
     capacity_dst_cpu_set = read_bool(f'{fbq_logmsg}.capacity_dst_cpu_set')
     capacity_dst_cpu = read_int(f'{fbq_logmsg}.capacity_dst_cpu') if capacity_dst_cpu_set else None
-    exec_capture_output(f'ptype {fbq_logmsg}.capacity_dst_cpu_set')
-    exec_capture_output(f'ptype {fbq_logmsg}.capacity_dst_cpu')
-    exec_capture_output(f'p/t {fbq_logmsg}.capacity_dst_cpu_set')
-    exec_capture_output(f'p/t {fbq_logmsg}.capacity_dst_cpu')
 
     sched_smt_active_set = read_bool(f'{fbq_logmsg}.sched_smt_active_set')
     sched_smt_active = read_bool(f'(bool) ({fbq_logmsg}.sched_smt_active)') if sched_smt_active_set else None
-    exec_capture_output(f'ptype {fbq_logmsg}.sched_smt_active_set')
-    exec_capture_output(f'ptype {fbq_logmsg}.sched_smt_active')
-    exec_capture_output(f'p/t {fbq_logmsg}.sched_smt_active_set')
-    exec_capture_output(f'p/t {fbq_logmsg}.sched_smt_active')
 
     arch_asym_cpu_priority_dst_cpu_set = read_bool(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu_set')
     arch_asym_cpu_priority_dst_cpu = read_int(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu') if arch_asym_cpu_priority_dst_cpu_set else None
 
     num_entries = read_int(f'{fbq_logmsg}.next_per_cpu_msg_slot - {fbq_logmsg}.per_cpu_msgs')
-    print('NUM ENTRIES:', num_entries)
+    # print('NUM ENTRIES:', num_entries)
     per_cpu_msgs = [read_fbq_per_cpu_logmsg(f'{fbq_logmsg}.per_cpu_msgs[{i}]') for i in range(num_entries)]
     return FBQLogMsg(capacity_dst_cpu, sched_smt_active, arch_asym_cpu_priority_dst_cpu, per_cpu_msgs)
 
@@ -398,12 +390,12 @@ def read_rebalance_domains(rd_msg, sd_count) -> RDLogMsg:
 
 class Encoder(json.JSONEncoder):
     def default(self, obj):
-        print(obj)
+        # print(obj)
         if isinstance(obj, Enum):
             return obj.name
         elif is_dataclass(obj):
             return asdict(obj)
-        print(type(obj))
+        # print(type(obj))
         return super().default(obj)
 
 ### Actual code ####
@@ -475,7 +467,6 @@ def exec_capture_output(cmd):
 def get_slot(rq, position=None):
     if position is None:
         position = f'{rq}->cfs.karan_logbuf.position'
-    print('RQ:', read_value(rq))
     print('POSITION:', read_value(position))
     return read_value(f'{rq}->cfs.karan_logbuf.msgs[{position}]')
 
@@ -484,7 +475,8 @@ def get_logmsg_info(ptr, sd_count):
         return None
     ptr = f'((struct karan_logmsg *) {ptr})'  # cast to the right type
     codepath = read_value(f'{ptr}->codepath')
-    print('CODEPATH:', codepath)
+    if LOUD:
+        print('CODEPATH:', codepath)
     if codepath == 'REBALANCE_DOMAINS':
         data = read_rebalance_domains(f'{ptr}->rd_msg', sd_count)
     else:
