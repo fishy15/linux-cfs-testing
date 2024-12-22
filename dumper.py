@@ -450,15 +450,15 @@ print('PORT:', PORT)
 
 ## Command to interact with GDB
 
-def exec_capture_output(cmd):
-    if LOUD:
+def exec(cmd):
+    if LOUD is True:
         print(cmd)
+    gdb.execute(cmd)
+
+def exec_capture_output(cmd):
+    print(cmd)
     output = gdb.execute(cmd, False, True).strip()
     return output
-
-def exec(cmd):
-    exec_capture_output(cmd)
-
 
 ## helper functions to extract information out 
 
