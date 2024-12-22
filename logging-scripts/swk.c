@@ -12,8 +12,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-//#include <libssh/libssh.h>
-
 #define CHECK_OK(a) a == 0 ? 0 : (fprintf(stderr, "%s failed at %s:%d, errno %d\n", #a, __FILE__, __LINE__, errno), cleanup(1));
 
 #define CHECK_EQ(a, b) a == b ? 0 : (fprintf(stderr, "%s != %s at %s:%d, errno %d\n", #a, #b, __FILE__, __LINE__, errno), cleanup(1));
@@ -30,10 +28,17 @@ pid_t ssh_waitfor = 0;
 char *topo;
 char *outfile;
 char *cmd;
-//ssh_session sesh;
 int gdb_port = 1234;
 int ssh_port = 2222;
 int iters = 1;
+
+void ready_ssh () {
+    char ssh_invoc[1024];
+    bzero(ssh_invoc, 1024);
+    snprintf(ssh_invoc, 1024, "ssh -p%d k@localhost whoami", ssh_port);
+
+    while (system(ssh_invoc) != 0);
+}
 
 void run_waitfor () {
     ssh_waitfor = fork();
@@ -106,8 +111,6 @@ void run_cmd (int tokill) {
 }
 
 void cleanup (int code) {
-    //if (grep) (printf("killing grep [pid %d]\n", grep), kill(grep, 9));
-    //if (gdb) (printf("killing gdb [pid %d]\n", gdb), kill(gdb, 2), sleep(1), kill(gdb, 3));
     if (gdb) (printf("killing gdb [pid %d]\n", gdb), kill(gdb, 5)); // help
     if (ssh_cmd) (printf("killing ssh_cmd [pid %d]\n", ssh_cmd), kill(ssh_cmd, 2));
     if (ssh_waitfor) (printf("killing ssh_waitfor [pid %d]\n", ssh_waitfor), kill(ssh_waitfor, 2));
@@ -220,6 +223,8 @@ int main (int argc, char **argv) {
     printf("ssh_port is %d\n", ssh_port);
     printf("outfile is %s\n", outfile);
     printf("cmd is %s\n", cmd);
+
+    ready_ssh();
     
     // register cleanup handler
     struct sigaction sact;
