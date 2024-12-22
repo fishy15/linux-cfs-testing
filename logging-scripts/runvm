@@ -33,13 +33,18 @@ else
     drive="/dev/sda"
 fi
 
-qemu-system-x86_64 \
+if [ -z $FAST ]; then
+    accel="tcg,thread=single"
+else
+    accel="kvm"
+    sudo="sudo"
+fi
+
+$sudo qemu-system-x86_64 \
     -nographic -m 4G $@ \
     -append "root=$drive rw console=tty0 console=ttyS0,115200n8 sched_verbose" \
     -kernel kbuild/arch/x86/boot/bzImage \
-    -accel tcg,thread=single \
+    -accel $accel \
     -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::$SSH-:22 \
     -gdb tcp::$GDB \
     $topology
-
-#     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
