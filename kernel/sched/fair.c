@@ -8842,7 +8842,7 @@ enum karan_codepath {
 // preprocessor system for percpu state
 // yikes !
 // TODO who is initing? i forget
-#define ACQUIRE_PER_CPU_LOGMSG(msg, cpuid) msg->next_per_cpu_msg_slot ?\
+#define ACQUIRE_PER_CPU_LOGMSG(msg, cpuid) (msg != NULL && msg->next_per_cpu_msg_slot != NULL) ?\
 	(msg->next_per_cpu_msg_slot->cpu_id = cpuid,\
 	 msg->next_per_cpu_msg_slot++) : NULL
 
@@ -11605,6 +11605,9 @@ static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath
 	struct karan_logbuf *logbuf = &(rq->cfs.karan_logbuf);
 	if (logbuf->sd_count == 0) { return NULL; }
 
+	// TODO: enabling this codepath causes some memory corruption issue
+	if (codepath == NEWIDLE_BALANCE) { return NULL; } // skip since we don't process it for now
+
 	if (++logbuf->position == CONFIG_KARAN_LOGBUF_SIZE) {
 		karan_msg_alloc_wraparound(rq);
 		logbuf->position = 0;
@@ -11715,19 +11718,29 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 
 	schedstat_inc(sd->lb_count[idle]);
 
+	struct karan_swb_logmsg *swb_logmsg = NULL;
+	struct karan_fbg_logmsg *fbg_logmsg = NULL;
+	struct karan_fbq_logmsg *fbq_logmsg = NULL;
+
+	if (msg != NULL) {
+		swb_logmsg = &msg->swb_logmsg;
+		fbg_logmsg = &msg->fbg_logmsg;
+		fbq_logmsg = &msg->fbq_logmsg;
+	}
+
 redo:
-	if (!should_we_balance(&env, &msg->swb_logmsg)) {
+	if (!should_we_balance(&env, swb_logmsg)) {
 		*continue_balancing = 0;
 		goto out_balanced;
 	}
 
-	group = find_busiest_group(&env, &msg->fbg_logmsg);
+	group = find_busiest_group(&env, fbg_logmsg);
 	if (!group) {
 		schedstat_inc(sd->lb_nobusyg[idle]);
 		goto out_balanced;
 	}
 
-	busiest = find_busiest_queue(&env, group, &msg->fbq_logmsg);
+	busiest = find_busiest_queue(&env, group, fbq_logmsg);
 	if (!busiest) {
 		schedstat_inc(sd->lb_nobusyq[idle]);
 		goto out_balanced;
@@ -11954,7 +11967,9 @@ out_one_pinned:
 	    sd->balance_interval < sd->max_interval)
 		sd->balance_interval *= 2;
 out:
-	memcpy(&msg->env, &env, sizeof env);
+	if (msg != NULL) {
+		memcpy(&msg->env, &env, sizeof env);
+	}
 	return ld_moved;
 }
 
@@ -12810,6 +12825,7 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 	// rest of the info may only be for updates but we can log anyways
 	// this_rq->max_idle_balance_cost
 	// this_rq->cfs.h_nr_running
+	//
 
 	if (unlikely(this_rq->cfs.karan_logbuf.sd_count == 0)) {
 		karan_log_init(this_rq);

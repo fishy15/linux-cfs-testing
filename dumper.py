@@ -319,9 +319,17 @@ class FBQLogMsg:
 def read_fbq_logmsg(fbq_logmsg) -> FBQLogMsg:
     capacity_dst_cpu_set = read_bool(f'{fbq_logmsg}.capacity_dst_cpu_set')
     capacity_dst_cpu = read_int(f'{fbq_logmsg}.capacity_dst_cpu') if capacity_dst_cpu_set else None
+    exec_capture_output(f'ptype {fbq_logmsg}.capacity_dst_cpu_set')
+    exec_capture_output(f'ptype {fbq_logmsg}.capacity_dst_cpu')
+    exec_capture_output(f'p/t {fbq_logmsg}.capacity_dst_cpu_set')
+    exec_capture_output(f'p/t {fbq_logmsg}.capacity_dst_cpu')
 
     sched_smt_active_set = read_bool(f'{fbq_logmsg}.sched_smt_active_set')
-    sched_smt_active = read_bool(f'{fbq_logmsg}.sched_smt_active') if sched_smt_active_set else None
+    sched_smt_active = read_bool(f'(bool) ({fbq_logmsg}.sched_smt_active)') if sched_smt_active_set else None
+    exec_capture_output(f'ptype {fbq_logmsg}.sched_smt_active_set')
+    exec_capture_output(f'ptype {fbq_logmsg}.sched_smt_active')
+    exec_capture_output(f'p/t {fbq_logmsg}.sched_smt_active_set')
+    exec_capture_output(f'p/t {fbq_logmsg}.sched_smt_active')
 
     arch_asym_cpu_priority_dst_cpu_set = read_bool(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu_set')
     arch_asym_cpu_priority_dst_cpu = read_int(f'{fbq_logmsg}.arch_asym_cpu_priority_dst_cpu') if arch_asym_cpu_priority_dst_cpu_set else None
@@ -381,18 +389,17 @@ class RDLogMsg:
     sched_idle_cpu: int
     sd_buf: List[RDEntryLogMsg]
 
-def read_rebalance_domains(rd_msg) -> RDLogMsg:
+def read_rebalance_domains(rd_msg, sd_count) -> RDLogMsg:
     cpu = read_int(f'{rd_msg}.cpu')
     idle = read_cpu_idle_type(f'{rd_msg}.idle')
     sched_idle_cpu = read_int(f'{rd_msg}.sched_idle_cpu')
-    sd_buf = [read_rebalance_domains_entry(f'{rd_msg}.sd_buf[0]')]  # TODO: read more than one entry
+    sd_buf = [read_rebalance_domains_entry(f'{rd_msg}.sd_buf[{i}]') for i in range(sd_count)]
     return RDLogMsg(cpu, idle, sched_idle_cpu, sd_buf)
 
 class Encoder(json.JSONEncoder):
     def default(self, obj):
         print(obj)
         if isinstance(obj, Enum):
-            print('case 1')
             return obj.name
         elif is_dataclass(obj):
             return asdict(obj)
@@ -459,6 +466,7 @@ def exec_capture_output(cmd):
     if LOUD:
         print(cmd)
     output = gdb.execute(cmd, False, True).strip()
+    print(output)
     return output
 
 ## helper functions to extract information out 
@@ -470,14 +478,14 @@ def get_slot(rq, position=None):
     print('POSITION:', read_value(position))
     return read_value(f'{rq}->cfs.karan_logbuf.msgs[{position}]')
 
-def get_logmsg_info(ptr):
+def get_logmsg_info(ptr, sd_count):
     if ptr == '0x0' or read_value(ptr) == '0x0':
         return None
     ptr = f'((struct karan_logmsg *) {ptr})'  # cast to the right type
     codepath = read_value(f'{ptr}->codepath')
     print('CODEPATH:', codepath)
     if codepath == 'REBALANCE_DOMAINS':
-        data = read_rebalance_domains(f'{ptr}->rd_msg')
+        data = read_rebalance_domains(f'{ptr}->rd_msg', sd_count)
     else:
         data = None
     return data
@@ -527,7 +535,7 @@ def handle_single_entry():
         exec('c')
         return
     print(ptr)
-    get_logmsg_info(ptr)
+    get_logmsg_info(ptr)  # TODO: get sd_count
 
 total_data = []
 def handle_wraparound():
@@ -535,8 +543,10 @@ def handle_wraparound():
     # dump whole buffer
     buf = 'rq->cfs.karan_logbuf'
     num_entries = read_int(f'sizeof({buf}.msgs) / sizeof(*{buf}.msgs)')
+    sd_count = read_int(f'{buf}.sd_count')
     print('NUM ENTRIES:', num_entries)
-    data = [get_logmsg_info(get_slot('rq', i)) for i in range(num_entries)]
+    print('SD COUNT:', sd_count)
+    data = [get_logmsg_info(get_slot('rq', i), sd_count) for i in range(num_entries)]
     total_data.extend(data)
     if FILE is not None and SWK is None:
         with open(FILE, 'w') as f:
