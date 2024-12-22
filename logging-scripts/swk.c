@@ -35,7 +35,7 @@ int iters = 1;
 void ready_ssh () {
     char ssh_invoc[1024];
     bzero(ssh_invoc, 1024);
-    snprintf(ssh_invoc, 1024, "ssh -p%d -o 'StrictHostChecking=no' k@localhost whoami", ssh_port);
+    snprintf(ssh_invoc, 1024, "ssh -p%d -o 'StrictHostKeyChecking=no' k@localhost whoami", ssh_port);
 
     while (system(ssh_invoc) != 0);
 }
