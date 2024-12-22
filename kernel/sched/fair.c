@@ -11279,7 +11279,7 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 		if (rt > env->fbq_type)
 			continue;
 
-		SET_IF_NOT_NULL(per_cpu_logmsg, past_rq_type, false);
+		SET_IF_NOT_NULL(per_cpu_logmsg, past_rq_type, true);
 
 		nr_running = rq->cfs.h_nr_running;
 		SET_IF_NOT_NULL(per_cpu_logmsg, rq_cfs_h_nr_running, nr_running);
