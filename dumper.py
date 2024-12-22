@@ -300,9 +300,9 @@ def read_fbq_per_cpu_logmsg(msg) -> FBQPerCpuLogMsg:
     arch_scale_cpu_capacity = read_int(f'{msg}.arch_scale_cpu_capacity') if migration_type == MigrationType.migrate_load else None
     sd_imbalance_pct = read_int(f'{msg}.sd_imbalance_pct') if migration_type == MigrationType.migrate_load else None
 
-    cpu_util_cfs_boost = read_int(f'{msg}.cpu_util_cfs_boost') if migrate_type == MigrationType.migrate_util else None
+    cpu_util_cfs_boost = read_int(f'{msg}.cpu_util_cfs_boost') if migration_type == MigrationType.migrate_util else None
 
-    rq_misfit_task_load = read_int(f'{msg}.rq_misfit_task_load') if migrate_type == MigrationType.migrate_misfit else None
+    rq_misfit_task_load = read_int(f'{msg}.rq_misfit_task_load') if migration_type == MigrationType.migrate_misfit else None
 
     return FBQPerCpuLogMsg(cpu_id, rq_type, rq_cfs_h_nr_running, capacity, arch_asym_cpu_priority, migration_type, 
             cpu_load, rq_cpu_capacity, arch_scale_cpu_capacity, sd_imbalance_pct, cpu_util_cfs_boost,
