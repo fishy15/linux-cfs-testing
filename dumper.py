@@ -466,7 +466,8 @@ def exec_capture_output(cmd):
     if LOUD:
         print(cmd)
     output = gdb.execute(cmd, False, True).strip()
-    print(output)
+    if LOUD:
+        print(output)
     return output
 
 ## helper functions to extract information out 
