@@ -8878,13 +8878,13 @@ struct karan_swb_logmsg {
 	int group_balance_cpu_sg;
 };
 
-struct karan_update_sd_stats_per_sg_logmsg {
+struct karan_update_stats_per_sg_logmsg {
 	bool local_group;	
 	struct sg_lb_stats sgs;	
 	struct cpumask cpus;
 };
 
-struct karan_update_sd_stats_per_cpu_logmsg {
+struct karan_update_stats_per_cpu_logmsg {
 	bool visited;
 	unsigned long load;
 	unsigned long util;
@@ -8915,12 +8915,12 @@ struct karan_fbg_logmsg {
 	bool maybe_balancing;
 	long env_imbalance;
 
-	struct karan_update_sd_stats_per_sg_logmsg *per_sg_msgs;
-	struct karan_update_sd_stats_per_sg_logmsg *next_per_sg_msg_slot;
+	struct karan_update_stats_per_sg_logmsg *per_sg_msgs;
+	struct karan_update_stats_per_sg_logmsg *next_per_sg_msg_slot;
 
 	// index cpu id into this array, instead of in order of processing
 	// as is done elsewhere
-	struct karan_update_sd_stats_per_cpu_logmsg *per_cpu_msgs;
+	struct karan_update_stats_per_cpu_logmsg *per_cpu_msgs;
 };
 
 struct karan_fbq_per_cpu_logmsg {
@@ -10099,7 +10099,7 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 		struct rq *rq = cpu_rq(i);
 		unsigned long load = cpu_load(rq);
 
-		struct karan_update_sd_stats_per_cpu_logmsg *per_cpu_msg = NULL;
+		struct karan_update_stats_per_cpu_logmsg *per_cpu_msg = NULL;
 		if (msg != NULL) {
 			per_cpu_msg = &msg->per_cpu_msgs[i];
 			per_cpu_msg->visited = true;
@@ -10790,7 +10790,7 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 		struct sg_lb_stats *sgs = &tmp_sgs;
 		int local_group;
 
-		struct karan_update_sd_stats_per_sg_logmsg *per_sg_logmsg = ACQUIRE_PER_SG_LOGMSG(msg);
+		struct karan_update_stats_per_sg_logmsg *per_sg_logmsg = ACQUIRE_PER_SG_LOGMSG(msg);
 
 		local_group = cpumask_test_cpu(env->dst_cpu, sched_group_span(sg));
 		if (local_group) {
@@ -11742,8 +11742,8 @@ ready:
 	int sum_per_msgs_size = 
 		sizeof(struct karan_swb_per_cpu_logmsg)
 		+ sizeof(struct karan_fbq_per_cpu_logmsg)
-		+ sizeof(struct karan_update_sd_stats_per_sg_logmsg) 
-		+ sizeof(struct karan_update_sd_stats_per_cpu_logmsg);
+		+ sizeof(struct karan_update_stats_per_sg_logmsg) 
+		+ sizeof(struct karan_update_stats_per_cpu_logmsg);
 
 	int space_for_per_cpu_msgs = sd_count * nr_cpu_ids * sum_per_msgs_size;
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_per_sd_logmsg);
