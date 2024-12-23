@@ -279,8 +279,8 @@ class FBGLogMsg:
     rd_perf_domain_exists: Optional[bool]
     rd_overutilized: Optional[bool]
     env_imbalance: Optional[int]
-    per_sg_msgs: List[UpdateStatsPerSg]
-    per_cpu_msgs: List[Optional[UpdateStatsPerCpu]]
+    per_sg_msgs: List[UpdateStatsPerSgLogmsg]
+    per_cpu_msgs: List[Optional[UpdateStatsPerCpuLogmsg]]
 
 def read_fbg_logmsg(fbg_logmsg) -> FBGLogMsg:
     sd_total_load = read_int(f'{fbg_logmsg}.sd_total_load')
@@ -590,8 +590,12 @@ def handle_wraparound():
     sd_count = read_int(f'{buf}.sd_count')
     print('NUM ENTRIES:', num_entries)
     print('SD COUNT:', sd_count)
-    data = [get_logmsg_info(get_slot('rq', i), sd_count) for i in range(num_entries)]
-    total_data.extend(data)
+    for i in range(num_entries):
+        try:
+            data = get_logmsg_info(get_slot('rq', i), sd_count)
+            total_data.append(data)
+        except:
+            pass
     if FILE is not None and SWK is None:
         with open(FILE, 'w') as f:
             json.dump(total_data, f, cls=Encoder)
