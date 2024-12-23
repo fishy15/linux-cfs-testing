@@ -229,6 +229,45 @@ def read_sg_lb_stats(stats) -> SgLbStats:
 
 
 @dataclass
+class UpdateStatsPerSgLogmsg:
+    local_group: bool
+    sgs: SgLbStats
+    cpus: CpuMask
+
+def read_update_stats_per_sg_logmsg(msg) -> UpdateStatsPerSgLogmsg:
+    local_group = read_bool(f'{msg}.local_group')
+    sgs = read_sg_lb_stats(f'{msg}.sgs')
+    cpus = read_cpumask(f'{msg}.cpus')
+    return UpdateStatsPerSgLogmsg(local_group, sgs, cpus)
+
+
+@dataclass
+class UpdateStatsPerCpuLogmsg:
+    load: int
+    util: int
+    runnable: int
+    h_nr_running: int
+    nr_running: int
+    overloaded: bool
+    overutilized: bool
+    idle: bool
+
+def read_update_stats_per_cpu_logmsg(msg) -> Optional[UpdateStatsPerCpuLogmsg]:
+    visited = read_bool(f'{msg}.visited')
+    if not visited:
+        return None
+    load = read_int(f'{msg}.load')
+    util = read_int(f'{msg}.util')
+    runnable = read_int(f'{msg}.runnable')
+    h_nr_running = read_int(f'{msg}.h_nr_running')
+    nr_running = read_int(f'{msg}.nr_running')
+    overloaded = read_bool(f'{msg}.overloaded')
+    overutilized = read_bool(f'{msg}.overutilized')
+    idle = read_bool(f'{msg}.idle')
+    return UpdateStatsPerCpuLogmsg(load, util, runnable, h_nr_running, nr_running, overloaded, overutilized, idle)
+
+
+@dataclass
 class FBGLogMsg:
     sd_total_load: int
     sd_total_capacity: int
@@ -240,6 +279,8 @@ class FBGLogMsg:
     rd_perf_domain_exists: Optional[bool]
     rd_overutilized: Optional[bool]
     env_imbalance: Optional[int]
+    per_sg_msgs: List[UpdateStatsPerSg]
+    per_cpu_msgs: List[Optional[UpdateStatsPerCpu]]
 
 def read_fbg_logmsg(fbg_logmsg) -> FBGLogMsg:
     sd_total_load = read_int(f'{fbg_logmsg}.sd_total_load')
@@ -259,9 +300,13 @@ def read_fbg_logmsg(fbg_logmsg) -> FBGLogMsg:
     maybe_balancing = read_bool(f'{fbg_logmsg}.maybe_balancing')
     env_imbalance = read_int(f'{fbg_logmsg}.env_imbalance') if maybe_balancing else None
 
+    num_entries = read_int(f'{fbg_logmsg}.next_per_sg_msg_slot - {fbg_logmsg}.per_sg_msgs')
+    per_sg_msgs = [read_update_stats_per_sg_logmsg(f'{fbg_logmsg}.per_sg_msgs[{i}]') for i in range(num_entries)]
+    per_cpu_msgs = [read_update_stats_per_cpu_logmsg(f'{fbg_logmsg}.per_cpu_msgs[{i}]') for i in range(CORES)]
+
     return FBGLogMsg(sd_total_load, sd_total_capacity, sd_avg_load, sd_prefer_sibling, 
             busiest_stat, local_stat, sched_energy_enabled, rd_perf_domain_exists, rd_overutilized,
-            env_imbalance)
+            env_imbalance, per_sg_msgs, per_cpu_msgs)
 
 
 @dataclass
