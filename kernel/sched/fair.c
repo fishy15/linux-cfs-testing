@@ -8846,6 +8846,9 @@ enum karan_codepath {
 	(msg->next_per_cpu_msg_slot->cpu_id = cpuid,\
 	 msg->next_per_cpu_msg_slot++) : NULL
 
+#define ACQUIRE_PER_SG_LOGMSG(msg) (msg != NULL && msg->next_per_sg_msg_slot != NULL) ?\
+	 (msg->next_per_sg_msg_slot++) : NULL
+
 struct karan_swb_per_cpu_logmsg {
    	int cpu_id;
 	bool idle_cpu;
@@ -8875,6 +8878,27 @@ struct karan_swb_logmsg {
 	int group_balance_cpu_sg;
 };
 
+struct karan_update_sd_stats_per_sg_logmsg {
+	bool local_group;	
+	struct sg_lb_stats sgs;	
+	struct cpumask cpus;
+};
+
+struct karan_update_sd_stats_per_cpu_logmsg {
+	bool visited;
+	unsigned long load;
+	unsigned long util;
+	unsigned long runnable;
+	unsigned long h_nr_running;
+	unsigned long nr_running;
+	bool overloaded;
+	bool overutilized;
+	// nr_numa_running
+	// nr_preferred_running
+	bool idle;
+};
+
+
 struct karan_fbg_logmsg {
 	unsigned long sd_total_load;
 	unsigned long sd_total_capacity;
@@ -8890,8 +8914,13 @@ struct karan_fbg_logmsg {
 	bool rd_overutilized;
 	bool maybe_balancing;
 	long env_imbalance;
-	// int ret_migration_type;
-	// int ret_imbalance;
+
+	struct karan_update_sd_stats_per_sg_logmsg *per_sg_msgs;
+	struct karan_update_sd_stats_per_sg_logmsg *next_per_sg_msg_slot;
+
+	// index cpu id into this array, instead of in order of processing
+	// as is done elsewhere
+	struct karan_update_sd_stats_per_cpu_logmsg *per_cpu_msgs;
 };
 
 struct karan_fbq_per_cpu_logmsg {
@@ -10057,7 +10086,8 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 				      struct sd_lb_stats *sds,
 				      struct sched_group *group,
 				      struct sg_lb_stats *sgs,
-				      int *sg_status)
+				      int *sg_status,
+				      struct karan_fbg_logmsg *msg)
 {
 	int i, nr_running, local_group;
 
@@ -10068,6 +10098,20 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 	for_each_cpu_and(i, sched_group_span(group), env->cpus) {
 		struct rq *rq = cpu_rq(i);
 		unsigned long load = cpu_load(rq);
+
+		struct karan_update_sd_stats_per_cpu_logmsg *per_cpu_msg = NULL;
+		if (msg != NULL) {
+			per_cpu_msg = &msg->per_cpu_msgs[i];
+			per_cpu_msg->visited = true;
+			per_cpu_msg->load = load;
+			per_cpu_msg->util = cpu_util_cfs(i);
+			per_cpu_msg->runnable = cpu_runnable(rq);
+			per_cpu_msg->h_nr_running = rq->cfs.h_nr_running;
+			per_cpu_msg->nr_running = rq->nr_running;
+			per_cpu_msg->overloaded = (rq->nr_running > 1);
+			per_cpu_msg->overutilized = cpu_overutilized(i);
+			per_cpu_msg->idle = idle_cpu(i);
+		}
 
 		sgs->group_load += load;
 		sgs->group_util += cpu_util_cfs(i);
@@ -10734,7 +10778,7 @@ static void update_idle_cpu_scan(struct lb_env *env,
  * @sds: variable to hold the statistics for this sched_domain.
  */
 
-static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sds)
+static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sds, struct karan_fbg_logmsg *msg)
 {
 	struct sched_group *sg = env->sd->groups;
 	struct sg_lb_stats *local = &sds->local_stat;
@@ -10746,6 +10790,8 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 		struct sg_lb_stats *sgs = &tmp_sgs;
 		int local_group;
 
+		struct karan_update_sd_stats_per_sg_logmsg *per_sg_logmsg = ACQUIRE_PER_SG_LOGMSG(msg);
+
 		local_group = cpumask_test_cpu(env->dst_cpu, sched_group_span(sg));
 		if (local_group) {
 			sds->local = sg;
@@ -10756,7 +10802,13 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 				update_group_capacity(env->sd, env->dst_cpu);
 		}
 
-		update_sg_lb_stats(env, sds, sg, sgs, &sg_status);
+		if (per_sg_logmsg != NULL) {
+			per_sg_logmsg->local_group = local_group;
+			memcpy(&per_sg_logmsg->sgs, sgs, sizeof *sgs);
+			cpumask_copy(&per_sg_logmsg->cpus, sched_group_span(sg));
+		}
+
+		update_sg_lb_stats(env, sds, sg, sgs, &sg_status, msg);
 
 		if (local_group)
 			goto next_group;
@@ -11068,11 +11120,19 @@ static struct sched_group *find_busiest_group(struct lb_env *env, struct karan_f
 
 	init_sd_lb_stats(&sds);
 
+	// we need to mark all per cpu messages as unvisited
+	if (msg != NULL) {
+		int i;
+		for_each_possible_cpu(i) {
+			msg->per_cpu_msgs[i].visited = false;
+		}
+	}
+
 	/*
 	 * Compute the various statistics relevant for load balancing at
 	 * this level.
 	 */
-	update_sd_lb_stats(env, &sds);
+	update_sd_lb_stats(env, &sds, msg);
 
 	// set codepath variables
 	SET_IF_NOT_NULL(msg, past_busiest_cores, false);
@@ -11679,7 +11739,13 @@ ready:
 	logbuf->sd_count = sd_count;
 	logbuf->cpu_count = nr_cpu_ids;
 
-	int space_for_per_cpu_msgs = sd_count * nr_cpu_ids * (sizeof(struct karan_swb_per_cpu_logmsg) + sizeof(struct karan_fbq_per_cpu_logmsg));
+	int sum_per_msgs_size = 
+		sizeof(struct karan_swb_per_cpu_logmsg)
+		+ sizeof(struct karan_fbq_per_cpu_logmsg)
+		+ sizeof(struct karan_update_sd_stats_per_sg_logmsg) 
+		+ sizeof(struct karan_update_sd_stats_per_cpu_logmsg);
+
+	int space_for_per_cpu_msgs = sd_count * nr_cpu_ids * sum_per_msgs_size;
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_per_sd_logmsg);
 	int nb_msg_size = sd_count * sizeof(struct karan_nb_per_sd_logmsg);
 	int max_submsg_size = rd_msg_size > nb_msg_size ? rd_msg_size : nb_msg_size;
