@@ -11684,11 +11684,26 @@ static struct karan_logmsg *_karan_msg_alloc (struct rq *rq, enum karan_codepath
 	if (codepath == REBALANCE_DOMAINS) {
 		msg->rd_msg.sd_buf = (struct karan_rd_per_sd_logmsg *) (raw_msg_ptr + sizeof(struct karan_logmsg));
 		void *per_cpu_msg_area = ((void *) msg->rd_msg.sd_buf) + (logbuf->sd_count * sizeof(struct karan_rd_per_sd_logmsg));
+		struct karan_swb_per_cpu_logmsg *swb_per_cpu_start = per_cpu_msg_area;
+		struct karan_update_stats_per_sg_logmsg *stats_per_sg_start = per_cpu_msg_area + logbuf->sd_count * logbuf->cpu_count * logbuf->per_cpu_msg_size;
+		struct karan_update_stats_per_cpu_logmsg *stats_per_cpu_start = per_cpu_msg_area + 2 * logbuf->sd_count * logbuf->cpu_count * logbuf->per_cpu_msg_size;
+		struct karan_fbq_per_cpu_logmsg *fbq_per_cpu_start = per_cpu_msg_area + 3 * logbuf->sd_count * logbuf->cpu_count * logbuf->per_cpu_msg_size;
 		for (int i = 0; i < logbuf->sd_count; i++) {
 			struct karan_rd_per_sd_logmsg *sd_logmsg = msg->rd_msg.sd_buf + i;
-			sd_logmsg->lb_logmsg.swb_logmsg.per_cpu_msgs = (struct karan_swb_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_swb_per_cpu_logmsg));
-			sd_logmsg->lb_logmsg.swb_logmsg.next_per_cpu_msg_slot =
+			sd_logmsg->lb_logmsg.swb_logmsg.per_cpu_msgs = swb_per_cpu_start + i * nr_cpu_ids;
+			sd_logmsg->lb_logmsg.swb_logmsg.next_per_cpu_msg_slot = 
 				sd_logmsg->lb_logmsg.swb_logmsg.per_cpu_msgs;
+
+			sd_logmsg->lb_logmsg.fbg_logmsg.per_sg_msgs = stats_per_sg_start + i * nr_cpu_ids;
+			sd_logmsg->lb_logmsg.fbg_logmsg.next_per_sg_msg_slot = 
+				sd_logmsg->lb_logmsg.fbg_logmsg.per_sg_msgs;
+
+			sd_logmsg->lb_logmsg.fbg_logmsg.per_cpu_msgs = stats_per_cpu_start + i * nr_cpu_ids;
+
+			sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs = fbq_per_cpu_start + i * nr_cpu_ids;
+			sd_logmsg->lb_logmsg.fbq_logmsg.next_per_cpu_msg_slot = 
+				sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs;
+
 			sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs = (struct karan_fbq_per_cpu_logmsg *) (per_cpu_msg_area + i * nr_cpu_ids * sizeof(struct karan_fbq_per_cpu_logmsg));
 			sd_logmsg->lb_logmsg.fbq_logmsg.next_per_cpu_msg_slot =
 				sd_logmsg->lb_logmsg.fbq_logmsg.per_cpu_msgs;
@@ -11739,21 +11754,24 @@ ready:
 	logbuf->sd_count = sd_count;
 	logbuf->cpu_count = nr_cpu_ids;
 
-	int sum_per_msgs_size = 
-		sizeof(struct karan_swb_per_cpu_logmsg)
-		+ sizeof(struct karan_fbq_per_cpu_logmsg)
-		+ sizeof(struct karan_update_stats_per_sg_logmsg) 
-		+ sizeof(struct karan_update_stats_per_cpu_logmsg);
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+	int max_per_msgs_size = 
+		MAX(sizeof(struct karan_swb_per_cpu_logmsg),
+		MAX(sizeof(struct karan_fbq_per_cpu_logmsg),
+		MAX(sizeof(struct karan_update_stats_per_sg_logmsg),
+		    sizeof(struct karan_update_stats_per_cpu_logmsg))));
+	logbuf->per_cpu_msg_size = max_per_msgs_size;
 
-	int space_for_per_cpu_msgs = sd_count * nr_cpu_ids * sum_per_msgs_size;
+	int space_for_per_cpu_msgs = sd_count * nr_cpu_ids * 4 * max_per_msgs_size;
 	int rd_msg_size = sd_count * sizeof(struct karan_rd_per_sd_logmsg);
 	int nb_msg_size = sd_count * sizeof(struct karan_nb_per_sd_logmsg);
-	int max_submsg_size = rd_msg_size > nb_msg_size ? rd_msg_size : nb_msg_size;
+	int max_submsg_size = MAX(rd_msg_size, nb_msg_size);
 	int msg_size = sizeof(struct karan_logmsg) + max_submsg_size + space_for_per_cpu_msgs;
 	logbuf->msg_size = msg_size;
 
 	logbuf->msg_area = kzalloc(msg_size * CONFIG_KARAN_LOGBUF_SIZE, GFP_KERNEL);
 	logbuf->position = CONFIG_KARAN_LOGBUF_SIZE - 1; // will be incremented on first alloc
+#undef MAX
 }
 
 /*
