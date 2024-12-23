@@ -336,17 +336,23 @@ def read_fbq_logmsg(fbq_logmsg) -> FBQLogMsg:
 class LBLogMsg:
     lb_env: LBEnv
     swb_logmsg: SWBLogMsg
-    fbg_logmsg: FBGLogMsg
-    fbq_logmsg: FBQLogMsg
+    swb_decision: bool
+    fbg_logmsg: Optional[FBGLogMsg]
+    fbg_succeeded: Optional[bool]
+    fbq_logmsg: Optional[FBQLogMsg]
+    fbq_succeeded: Optional[bool]
 
 def read_lb_logmsg(lb_logmsg) -> Optional[LBLogMsg]:
     runs_load_balance = read_bool(f'{lb_logmsg}.runs_load_balance')
     if runs_load_balance:
         lb_env = read_lb_env(f'{lb_logmsg}.env')
         swb_logmsg = read_swb_logmsg(f'{lb_logmsg}.swb_logmsg')
-        fbg_logmsg = read_fbg_logmsg(f'{lb_logmsg}.fbg_logmsg')
-        fbq_logmsg = read_fbq_logmsg(f'{lb_logmsg}.fbq_logmsg')
-        return LBLogMsg(lb_env, swb_logmsg, fbg_logmsg, fbq_logmsg)
+        swb_decision = read_bool(f'{lb_logmsg}.swb_decision')
+        fbg_logmsg = read_fbg_logmsg(f'{lb_logmsg}.fbg_logmsg') if swb_decision else None
+        fbg_succeeded = read_bool(f'{lb_logmsg}.fbg_succeeded')
+        fbq_logmsg = read_fbq_logmsg(f'{lb_logmsg}.fbq_logmsg') if fbg_succeeded else None
+        fbq_succeeded = read_bool(f'{lb_logmsg}.fbq_succeeded')
+        return LBLogMsg(lb_env, swb_logmsg, swb_decision, fbg_logmsg, fbg_succeeded, fbq_logmsg, fbq_succeeded)
     else:
         return None
         lb_env = None

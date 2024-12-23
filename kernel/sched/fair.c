@@ -8947,8 +8947,11 @@ struct karan_lb_logmsg {
 	bool runs_load_balance;
 	struct lb_env env;
 	struct karan_swb_logmsg swb_logmsg;
+	bool swb_decision;
 	struct karan_fbg_logmsg fbg_logmsg;
+	bool fbg_succeeded;
 	struct karan_fbq_logmsg fbq_logmsg;
+	bool fbq_succeeded;
 };
 
 // values for a specific sched_domain iteration
@@ -11722,6 +11725,10 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 	struct karan_fbg_logmsg *fbg_logmsg = NULL;
 	struct karan_fbq_logmsg *fbq_logmsg = NULL;
 
+	SET_IF_NOT_NULL(msg, swb_decision, false);
+	SET_IF_NOT_NULL(msg, fbg_succeeded, false);
+	SET_IF_NOT_NULL(msg, fbq_succeeded, false);
+
 	if (msg != NULL) {
 		swb_logmsg = &msg->swb_logmsg;
 		fbg_logmsg = &msg->fbg_logmsg;
@@ -11734,17 +11741,23 @@ redo:
 		goto out_balanced;
 	}
 
+	SET_IF_NOT_NULL(msg, swb_decision, true);
+
 	group = find_busiest_group(&env, fbg_logmsg);
 	if (!group) {
 		schedstat_inc(sd->lb_nobusyg[idle]);
 		goto out_balanced;
 	}
 
+	SET_IF_NOT_NULL(msg, fbg_succeeded, true);
+
 	busiest = find_busiest_queue(&env, group, fbq_logmsg);
 	if (!busiest) {
 		schedstat_inc(sd->lb_nobusyq[idle]);
 		goto out_balanced;
 	}
+
+	SET_IF_NOT_NULL(msg, fbq_succeeded, true);
 
 	WARN_ON_ONCE(busiest == env.dst_rq);
 
