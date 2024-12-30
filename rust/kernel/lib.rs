@@ -37,6 +37,7 @@ mod build_assert;
 pub mod error;
 pub mod init;
 pub mod ioctl;
+pub mod karan;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
 #[cfg(CONFIG_NET)]

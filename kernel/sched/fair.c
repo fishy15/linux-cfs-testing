@@ -55,6 +55,8 @@
 #include "stats.h"
 #include "autogroup.h"
 
+#include "karan.h"
+
 /*
  * The initial- and re-scaling of tunables is configurable
  *
@@ -11283,6 +11285,8 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 		.tasks		= LIST_HEAD_INIT(env.tasks),
 	};
 
+        karan_function();
+        
 	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
 
 	schedstat_inc(sd->lb_count[idle]);
