@@ -16,9 +16,3 @@ pub trait Karan {
 pub extern "C" fn karan_extern_function () {
     pr_info!("please help\n");
 }
-
-/// this function is flown
-#[no_mangle]
-pub extern "C" fn karan_function () {
-    pr_info!("please help\n");
-}

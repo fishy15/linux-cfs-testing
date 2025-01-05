@@ -11285,7 +11285,7 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 		.tasks		= LIST_HEAD_INIT(env.tasks),
 	};
 
-        karan_function();
+        __karan_rust_module_karan();
         
 	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
 

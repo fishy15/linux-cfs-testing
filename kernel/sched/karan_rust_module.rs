@@ -10,6 +10,11 @@ module! {
     license: "MIT",
 }
 
+kernel::macros::karan_macro! {
+    type: KaranRustModule,
+    name: "karan_rust_module",
+}
+
 struct KaranRustModule {
     rust_counter: u64,
 }
@@ -47,4 +52,9 @@ impl Drop for KaranRustModule {
     }
 }
 
-
+impl KaranRustModule {
+    fn karan(&mut self) -> Result<()> {
+        pr_info!("bwuh??\n");
+        Ok(())
+    }
+}

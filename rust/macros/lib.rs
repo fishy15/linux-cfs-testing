@@ -12,6 +12,7 @@ mod pin_data;
 mod pinned_drop;
 mod vtable;
 mod zeroable;
+mod karan_macro;
 
 use proc_macro::TokenStream;
 
@@ -404,4 +405,10 @@ pub fn paste(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Zeroable)]
 pub fn derive_zeroable(input: TokenStream) -> TokenStream {
     zeroable::derive(input)
+}
+
+/// am i dumb
+#[proc_macro]
+pub fn karan_macro(ts: TokenStream) -> TokenStream {
+    karan_macro::karan_macro(ts)
 }

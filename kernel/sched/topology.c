@@ -2538,6 +2538,8 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 error:
 	__free_domain_allocs(&d, alloc_state, cpu_map);
 
+
+        printk(KERN_EMERG "==k== finished build_sched_domains!!\n");
 	return ret;
 }
 
@@ -2781,6 +2783,8 @@ match3:
 	ndoms_cur = ndoms_new;
 
 	update_sched_domain_debugfs();
+
+        printk(KERN_EMERG "==k== finished partition_sched_domains_locked!!\n");
 }
 
 /*
@@ -2792,4 +2796,5 @@ void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 	mutex_lock(&sched_domains_mutex);
 	partition_sched_domains_locked(ndoms_new, doms_new, dattr_new);
 	mutex_unlock(&sched_domains_mutex);
+        printk(KERN_EMERG "==k== finished partition_sched_domains!!\n");
 }
