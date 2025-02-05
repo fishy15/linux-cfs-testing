@@ -60,6 +60,8 @@ struct NullBlkDevice;
 impl Operations for NullBlkDevice {
     #[inline(always)]
     fn queue_rq(rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
+        pr_info!("rnull bwaaaa\n");
+        
         mq::Request::end_ok(rq)
             .map_err(|_e| kernel::error::code::EIO)
             // We take no refcounts on the request, so we expect to be able to

@@ -107,3 +107,5 @@
 #ifdef CONFIG_SCHED_AUTOGROUP
 # include "autogroup.c"
 #endif
+
+#include "munch_plumbing.c"

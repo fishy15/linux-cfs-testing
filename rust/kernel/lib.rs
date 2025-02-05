@@ -69,6 +69,9 @@ pub mod types;
 pub mod uaccess;
 pub mod workqueue;
 
+pub mod munch_ops;
+//pub use munch_ops::MunchOps;
+
 #[doc(hidden)]
 pub use bindings;
 pub use macros;

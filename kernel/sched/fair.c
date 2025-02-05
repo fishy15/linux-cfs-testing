@@ -55,6 +55,8 @@
 #include "stats.h"
 #include "autogroup.h"
 
+#include <linux/munch.h>
+
 /*
  * The initial- and re-scaling of tunables is configurable
  *
@@ -11623,13 +11625,16 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 		.fbq_type	= all,
 		.tasks		= LIST_HEAD_INIT(env.tasks),
 	};
-
+        int karan_swb;
+        
 	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
 
 	schedstat_inc(sd->lb_count[idle]);
 
 redo:
-	if (!should_we_balance(&env)) {
+        karan_swb = should_we_balance(&env);
+        munch64((uint64_t) karan_swb);
+	if (!karan_swb) {
 		*continue_balancing = 0;
 		goto out_balanced;
 	}
