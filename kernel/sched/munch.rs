@@ -2,7 +2,9 @@
 
 //! munch
 
-use kernel::{bindings, munch_ops::*, prelude::*};
+use core::clone::Clone;
+use kernel::{bindings, kvec, munch_ops::*, prelude::*};
+use kernel::alloc::kvec::KVec;
 
 struct RustMunchState {
     sum: u64
@@ -55,5 +57,41 @@ impl MunchOps for RustMunch {
             RUST_MUNCH_STATE.sum += m;
             pr_info!("munched u64 {}, sum is {}\n", m, RUST_MUNCH_STATE.sum);
         }
+    }
+}
+
+// ring buffer to store information
+
+trait Reset {
+    // Resets the data inside
+    fn reset(&mut self);
+
+    // Constructs a new struct
+    fn new() -> Self;
+}
+
+struct RingBuffer<T: Reset> {
+    entries: KVec<T>,
+    head: usize,
+}
+
+impl<T: Reset + Clone> RingBuffer<T> {
+    fn new(n: usize) -> Self {
+        return RingBuffer {
+            entries: kvec![T::new(); n].expect("allocation error"),
+            head: n - 1, // will be shifted to 0 on first move next
+        };
+    }
+
+    fn move_next(&mut self) {
+        self.head += 1;
+        if self.head == self.entries.len() {
+            self.head = 0;
+        }
+        self.current().reset();
+    }
+
+    fn current(&mut self) -> &mut T {
+        return &mut self.entries[self.head];
     }
 }
