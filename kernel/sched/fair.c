@@ -11633,7 +11633,9 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 
 redo:
         karan_swb = should_we_balance(&env);
-        // munch64((uint64_t) karan_swb);
+	struct meal_descriptor md;
+	open_meal(this_cpu, &md);
+        munch64(&md, MUNCH_CPU_NUMBER, (uint64_t) this_cpu);
 	if (!karan_swb) {
 		*continue_balancing = 0;
 		goto out_balanced;

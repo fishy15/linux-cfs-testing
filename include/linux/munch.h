@@ -12,11 +12,11 @@ struct meal_descriptor {
 };
 
 struct munch_ops {
-	void (*munch64) (size_t, enum munch_location, uint64_t);
+	void (*munch64) (struct meal_descriptor *, enum munch_location, uint64_t);
 	void (*open_meal) (size_t, struct meal_descriptor *);
 };
 
-void munch64(size_t, enum munch_location, uint64_t);
+void munch64(struct meal_descriptor *, enum munch_location, uint64_t);
 void open_meal(size_t, struct meal_descriptor *);
 
 void set_muncher (struct munch_ops *);

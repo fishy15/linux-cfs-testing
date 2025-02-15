@@ -38,7 +38,6 @@ impl kernel::Module for RustMunch {
         unsafe {
             bindings::set_muncher(&mut ret.table);
 
-            // let cpu_count = bindings::munch_get_cpu_number();
             let cpu_count = bindings::nr_cpu_ids as usize;
             let mut bufs = KVec::<RingBuffer<LoadBalanceInfo>>
                 ::with_capacity(cpu_count, GFP_KERNEL)
@@ -64,7 +63,7 @@ impl Drop for RustMunch {
 
 #[vtable]
 impl MunchOps for RustMunch {
-    fn munch64(_md: usize, _location: bindings::munch_location, x: u64) {
+    fn munch64(_md: *mut bindings::meal_descriptor, _location: bindings::munch_location, x: u64) {
         // SAFETY: safe
         pr_info!("munched u64 {}\n", x);
     }
