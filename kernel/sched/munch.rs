@@ -3,15 +3,17 @@
 //! munch
 
 use core::clone::Clone;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::option::Option;
 use kernel::{bindings, kvec, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
 
 struct RustMunchState {
-    sum: u64
+    buf: Option<RingBuffer<LoadBalanceInfo>>,
 }
 
 static mut RUST_MUNCH_STATE: RustMunchState = RustMunchState {
-    sum: 0,
+    buf: None,
 };
 
 module! {
@@ -31,14 +33,14 @@ impl kernel::Module for RustMunch {
         const TABLE: kernel::bindings::munch_ops = *MunchOpsVTable::<RustMunch>::build();
         let mut ret = Self{table: TABLE};
 
-        let mut buf = RingBuffer::<LoadBalanceInfo>::new(3);
-        buf.move_next();
-        let _ = buf.current();
-        
         // SAFETY: meowww
         unsafe {
             bindings::set_muncher(&mut ret.table)
         };
+
+        unsafe {
+            RUST_MUNCH_STATE.buf = Some(RingBuffer::<LoadBalanceInfo>::new(256));
+        }
         
         Ok(ret)
     }
@@ -55,14 +57,16 @@ impl Drop for RustMunch {
 impl MunchOps for RustMunch {
     fn munch64(_md: usize, _location: bindings::munch_location, x: u64) {
         // SAFETY: safe
-        unsafe {
-            RUST_MUNCH_STATE.sum += x;
-            pr_info!("munched u64 {}, sum is {}\n", x, RUST_MUNCH_STATE.sum);
-        }
+        pr_info!("munched u64 {}\n", x);
     }
 
     fn open_meal() -> usize {
-        return 0;
+        unsafe {
+            if let Some(buf) = &mut RUST_MUNCH_STATE.buf {
+                return buf.get_entry_idx()
+            }
+        }
+        return usize::MAX;
     }
 }
 
@@ -77,18 +81,25 @@ trait Reset {
 }
 
 #[derive(Clone)]
-struct LoadBalanceInfo {}
+struct LoadBalanceInfo {
+    cpu_number: Option<u64>,
+}
 
 impl Reset for LoadBalanceInfo {
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.cpu_number = None;
+    }
+
     fn new() -> Self {
-        LoadBalanceInfo {}
+        LoadBalanceInfo {
+            cpu_number: None,
+        }
     }
 }
 
 struct RingBuffer<T: Reset> {
     entries: KVec<T>,
-    head: usize,
+    head: AtomicUsize,
 }
 
 // locations
@@ -117,19 +128,17 @@ impl<T: Reset + Clone> RingBuffer<T> {
     fn new(n: usize) -> Self {
         return RingBuffer {
             entries: kvec![T::new(); n].expect("allocation error"),
-            head: n - bindings::munch_location::MUNCH_CPU_NUMBER as usize, // will be shifted to 0 on first move next
+            head: 0.into(), // will be shifted to 0 on first allocation
         };
     }
 
-    fn move_next(&mut self) {
-        self.head += 1;
-        if self.head == self.entries.len() {
-            self.head = 0;
-        }
-        self.current().reset();
+    fn get_entry_idx(&mut self) -> usize {
+        let md = self.head.fetch_add(1, Ordering::SeqCst) % self.entries.len();
+        self.entries[md].reset();
+        return md;
     }
 
-    fn current(&mut self) -> &mut T {
-        return &mut self.entries[self.head];
-    }
+    // fn get(&mut self, md: usize) -> &mut T {
+    //     return &mut self.entries[md];
+    // }
 }
