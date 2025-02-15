@@ -7,13 +7,14 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::option::Option;
 use kernel::{bindings, kvec, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
+use kernel::alloc::flags::GFP_KERNEL;
 
 struct RustMunchState {
-    buf: Option<RingBuffer<LoadBalanceInfo>>,
+    bufs: Option<KVec<RingBuffer<LoadBalanceInfo>>>,
 }
 
 static mut RUST_MUNCH_STATE: RustMunchState = RustMunchState {
-    buf: None,
+    bufs: None,
 };
 
 module! {
@@ -35,11 +36,19 @@ impl kernel::Module for RustMunch {
 
         // SAFETY: meowww
         unsafe {
-            bindings::set_muncher(&mut ret.table)
-        };
+            bindings::set_muncher(&mut ret.table);
 
-        unsafe {
-            RUST_MUNCH_STATE.buf = Some(RingBuffer::<LoadBalanceInfo>::new(256));
+            // let cpu_count = bindings::munch_get_cpu_number();
+            let cpu_count = bindings::nr_cpu_ids as usize;
+            let mut bufs = KVec::<RingBuffer<LoadBalanceInfo>>
+                ::with_capacity(cpu_count, GFP_KERNEL)
+                .expect("alloc failure");
+            for i in 0..cpu_count {
+                bufs.push(RingBuffer::<LoadBalanceInfo>::new(256, i), GFP_KERNEL)
+                    .expect("alloc failure (should not happen)");
+            }
+
+            RUST_MUNCH_STATE.bufs = Some(bufs);
         }
         
         Ok(ret)
@@ -60,15 +69,29 @@ impl MunchOps for RustMunch {
         pr_info!("munched u64 {}\n", x);
     }
 
-    fn open_meal() -> usize {
+    fn open_meal(cpu_number: usize) -> bindings::meal_descriptor {
         unsafe {
-            if let Some(buf) = &mut RUST_MUNCH_STATE.buf {
-                return buf.get_entry_idx()
+            if let Some(bufs) = &mut RUST_MUNCH_STATE.bufs {
+                let buf = &mut bufs[cpu_number];
+                return buf.open_meal_descriptor();
             }
         }
-        return usize::MAX;
+        return md_invalid();
     }
 }
+
+fn md_invalid() -> bindings::meal_descriptor {
+    bindings::meal_descriptor {
+        cpu_number: usize::MAX,
+        entry_idx: usize::MAX,
+    }
+}
+
+/*
+fn md_is_invalid(md: &bindings::meal_descriptor) -> bool {
+    md.cpu_number == usize::MAX || md.entry_idx == usize::MAX
+}
+*/
 
 // ring buffer to store information
 
@@ -98,6 +121,7 @@ impl Reset for LoadBalanceInfo {
 }
 
 struct RingBuffer<T: Reset> {
+    cpu: usize,
     entries: KVec<T>,
     head: AtomicUsize,
 }
@@ -125,20 +149,24 @@ fn munch_index(md: MealDescriptor, location: Location, index: usize, value: 64) 
 */
 
 impl<T: Reset + Clone> RingBuffer<T> {
-    fn new(n: usize) -> Self {
+    fn new(n: usize, cpu: usize) -> Self {
         return RingBuffer {
+            cpu: cpu,
             entries: kvec![T::new(); n].expect("allocation error"),
             head: 0.into(), // will be shifted to 0 on first allocation
         };
     }
 
-    fn get_entry_idx(&mut self) -> usize {
-        let md = self.head.fetch_add(1, Ordering::SeqCst) % self.entries.len();
-        self.entries[md].reset();
-        return md;
+    fn open_meal_descriptor(&mut self) -> bindings::meal_descriptor {
+        let idx = self.head.fetch_add(1, Ordering::SeqCst) % self.entries.len();
+        self.entries[idx].reset();
+        bindings::meal_descriptor {
+            cpu_number: self.cpu,
+            entry_idx: idx,
+        }
     }
 
-    // fn get(&mut self, md: usize) -> &mut T {
-    //     return &mut self.entries[md];
+    // fn get(&mut self, entry_idx: usize) -> &mut T {
+    //     return &mut self.entries[entry_idx];
     // }
 }

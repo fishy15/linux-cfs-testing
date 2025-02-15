@@ -10,7 +10,7 @@ pub trait MunchOps: Sized {
     /// munch a u64
     fn munch64(md: usize, location: bindings::munch_location, x: u64);
     /// open a meal
-    fn open_meal() -> usize;
+    fn open_meal(cpu_number: usize) -> bindings::meal_descriptor;
 }
 
 /// munch vtable
@@ -25,8 +25,11 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         T::munch64(md, location, x)
     }
 
-    unsafe extern "C" fn open_meal_c() -> usize {
-        T::open_meal()
+    unsafe extern "C" fn open_meal_c(cpu_number: usize, md: *mut bindings::meal_descriptor) {
+        let md_ = T::open_meal(cpu_number);
+        unsafe {
+            core::ptr::copy(&md_ as *const bindings::meal_descriptor, md, 1);
+        }
     }
     
     const VTABLE: bindings::munch_ops = bindings::munch_ops {

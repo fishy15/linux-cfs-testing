@@ -14,9 +14,8 @@ void set_muncher (struct munch_ops *m) {
     is_muncher_valid = true;
 }
 
-size_t open_meal() {
+void open_meal(size_t cpu_number, struct meal_descriptor *md) {
     if (is_muncher_valid) {
-        return muncher.open_meal();
+        return muncher.open_meal(cpu_number, md);
     }
-    return -1;
 }
