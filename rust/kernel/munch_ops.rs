@@ -8,7 +8,9 @@ use core::marker::PhantomData;
 #[macros::vtable]
 pub trait MunchOps: Sized {
     /// munch a u64
-    fn munch64(m: u64);
+    fn munch64(md: usize, location: bindings::munch_location, x: u64);
+    /// open a meal
+    fn open_meal() -> usize;
 }
 
 /// munch vtable
@@ -19,12 +21,17 @@ pub struct MunchOpsVTable<T: MunchOps>(PhantomData<T>);
 impl<T: MunchOps> MunchOpsVTable<T> {
     /// # Safety
     /// priomise!
-    unsafe extern "C" fn munch64_c(m: u64) {
-        T::munch64(m)
+    unsafe extern "C" fn munch64_c(md: usize, location: bindings::munch_location, x: u64) {
+        T::munch64(md, location, x)
+    }
+
+    unsafe extern "C" fn open_meal_c() -> usize {
+        T::open_meal()
     }
     
     const VTABLE: bindings::munch_ops = bindings::munch_ops {
         munch64: Some(Self::munch64_c),
+        open_meal: Some(Self::open_meal_c),
     };
 
     /// build

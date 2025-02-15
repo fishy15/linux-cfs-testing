@@ -42,7 +42,7 @@ impl kernel::Module for RustMunch {
         
         Ok(ret)
     }
-}
+ }
 
 impl Drop for RustMunch {
     fn drop(&mut self) {
@@ -53,12 +53,16 @@ impl Drop for RustMunch {
 
 #[vtable]
 impl MunchOps for RustMunch {
-    fn munch64(m: u64) {
+    fn munch64(_md: usize, _location: bindings::munch_location, x: u64) {
         // SAFETY: safe
         unsafe {
-            RUST_MUNCH_STATE.sum += m;
-            pr_info!("munched u64 {}, sum is {}\n", m, RUST_MUNCH_STATE.sum);
+            RUST_MUNCH_STATE.sum += x;
+            pr_info!("munched u64 {}, sum is {}\n", x, RUST_MUNCH_STATE.sum);
         }
+    }
+
+    fn open_meal() -> usize {
+        return 0;
     }
 }
 
