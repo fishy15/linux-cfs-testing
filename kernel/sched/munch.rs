@@ -63,9 +63,19 @@ impl Drop for RustMunch {
 
 #[vtable]
 impl MunchOps for RustMunch {
-    fn munch64(_md: *mut bindings::meal_descriptor, _location: bindings::munch_location, x: u64) {
+    fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location, x: u64) {
         // SAFETY: safe
-        pr_info!("munched u64 {}\n", x);
+        if !md_is_invalid(&*md) {
+            let cpu_number = (*md).cpu_number;
+            let entry_idx = (*md).entry_idx;
+            unsafe {
+                if let Some(bufs) = &mut RUST_MUNCH_STATE.bufs {
+                    let buf = &mut bufs[cpu_number];
+                    let entry = &mut buf.get(entry_idx);
+                    entry.set_value(&location, x);
+                }
+            }
+        }
     }
 
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor {
@@ -86,11 +96,9 @@ fn md_invalid() -> bindings::meal_descriptor {
     }
 }
 
-/*
 fn md_is_invalid(md: &bindings::meal_descriptor) -> bool {
     md.cpu_number == usize::MAX || md.entry_idx == usize::MAX
 }
-*/
 
 // ring buffer to store information
 
@@ -105,6 +113,14 @@ trait Reset {
 #[derive(Clone)]
 struct LoadBalanceInfo {
     cpu_number: Option<u64>,
+}
+
+impl LoadBalanceInfo {
+    fn set_value(&mut self, location: &bindings::munch_location, x: u64) {
+        match location {
+            bindings::munch_location::MUNCH_CPU_NUMBER => self.cpu_number = Some(x),
+        }
+    }
 }
 
 impl Reset for LoadBalanceInfo {
@@ -165,7 +181,7 @@ impl<T: Reset + Clone> RingBuffer<T> {
         }
     }
 
-    // fn get(&mut self, entry_idx: usize) -> &mut T {
-    //     return &mut self.entries[entry_idx];
-    // }
+    fn get(&mut self, entry_idx: usize) -> &mut T {
+        return &mut self.entries[entry_idx];
+    }
 }
