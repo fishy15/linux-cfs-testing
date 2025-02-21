@@ -14,11 +14,16 @@ struct meal_descriptor {
 struct munch_ops {
 	void (*munch64) (struct meal_descriptor *, enum munch_location, uint64_t);
 	void (*open_meal) (size_t, struct meal_descriptor *);
+	// void (*dump_data) (char *buf, size_t length);
 };
 
 void munch64(struct meal_descriptor *, enum munch_location, uint64_t);
 void open_meal(size_t, struct meal_descriptor *);
 
 void set_muncher (struct munch_ops *);
+
+// procfs
+int munch_register_procfs(void);
+void munch_unregister_procfs(void);
 
 #endif

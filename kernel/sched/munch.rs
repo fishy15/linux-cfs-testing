@@ -49,6 +49,13 @@ impl kernel::Module for RustMunch {
 
             RUST_MUNCH_STATE.bufs = Some(bufs);
         }
+
+        unsafe {
+            let res = bindings::munch_register_procfs();
+            if res != 0 {
+                panic!("didnt setup");
+            }
+        }
         
         Ok(ret)
     }
@@ -57,7 +64,9 @@ impl kernel::Module for RustMunch {
 impl Drop for RustMunch {
     fn drop(&mut self) {
         pr_info!("rust munch says bye\n");
-        // TODO remove muncher bindings i guess
+        unsafe {
+            bindings::munch_unregister_procfs();
+        }
     }
 }
 
