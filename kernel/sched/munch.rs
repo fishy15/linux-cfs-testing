@@ -8,6 +8,7 @@ use core::option::Option;
 use kernel::{bindings, kvec, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
 use kernel::alloc::flags::GFP_KERNEL;
+use kernel::uaccess::UserSlice;
 
 struct RustMunchState {
     bufs: Option<KVec<RingBuffer<LoadBalanceInfo>>>,
@@ -95,6 +96,15 @@ impl MunchOps for RustMunch {
             }
         }
         return md_invalid();
+    }
+
+    fn dump_data(buf: UserSlice) -> isize {
+        let mut writer = buf.writer();
+        let message = "muncher".as_bytes();
+        match writer.write_slice(message) {
+            Ok(_) => message.len().try_into().unwrap(),
+            Err(_) => -1,
+        }
     }
 }
 
