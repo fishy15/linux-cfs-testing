@@ -3,6 +3,7 @@
 
 use crate::{bindings, macros};
 use core::marker::PhantomData;
+use kernel::error::Result;
 use kernel::uaccess::{UserPtr, UserSlice};
 
 /// impl to munch
@@ -13,7 +14,7 @@ pub trait MunchOps: Sized {
     /// open a meal
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor;
     /// write to procfs
-    fn dump_data(buf: UserSlice) -> isize;
+    fn dump_data(buf: UserSlice) -> Result<isize>;
 }
 
 /// munch vtable
@@ -41,7 +42,10 @@ impl<T: MunchOps> MunchOpsVTable<T> {
     unsafe extern "C" fn dump_data_c(buf: *mut ffi::c_char, length: usize) -> isize {
         let uptr = buf as UserPtr;
         let uslice = UserSlice::new(uptr, length);
-        T::dump_data(uslice)
+        match T::dump_data(uslice) {
+            Ok(sz) => sz,
+            Err(e) => e.to_errno().try_into().unwrap(),
+        }
     }
     
     const VTABLE: bindings::munch_ops = bindings::munch_ops {

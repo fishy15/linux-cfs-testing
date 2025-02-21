@@ -8,6 +8,7 @@ use core::option::Option;
 use kernel::{bindings, kvec, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
 use kernel::alloc::flags::GFP_KERNEL;
+use kernel::error::{Result, Error};
 use kernel::uaccess::UserSlice;
 
 struct RustMunchState {
@@ -98,13 +99,11 @@ impl MunchOps for RustMunch {
         return md_invalid();
     }
 
-    fn dump_data(buf: UserSlice) -> isize {
+    fn dump_data(buf: UserSlice) -> Result<isize, Error> {
         let mut writer = buf.writer();
-        let message = "muncher".as_bytes();
-        match writer.write_slice(message) {
-            Ok(_) => message.len().try_into().unwrap(),
-            Err(_) => -1,
-        }
+        let message = "muncher\n".as_bytes();
+        let result = writer.write_slice(message);
+        result.map(|_| message.len().try_into().unwrap())
     }
 }
 
