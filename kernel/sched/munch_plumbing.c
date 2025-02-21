@@ -51,7 +51,7 @@ static const struct proc_ops proc_file_fops = {
 }; 
 
 int munch_register_procfs() {
-	munch_procfs = proc_create(PROCFS_NAME, 0644, NULL, &proc_file_fops); 
+	munch_procfs = proc_create(PROCFS_NAME, 0444, NULL, &proc_file_fops); 
 	if (munch_procfs == NULL) { 
 		pr_alert("Error:Could not initialize /proc/%s\n", PROCFS_NAME); 
 		return -ENOMEM; 
