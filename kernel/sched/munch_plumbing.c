@@ -27,11 +27,16 @@ void open_meal(size_t cpu_number, struct meal_descriptor *md) {
 #define PROCFS_BUF_SIZE 0x20000
 
 static struct proc_dir_entry *munch_procfs; 
-static char procfs_buffer[PROCFS_BUF_SIZE];
 
 static int show_munch(struct seq_file *m) {
-	long cpu = (long) m->private;
-	seq_printf(m, "%ld\n", cpu);
+	static char procfs_buffer[PROCFS_BUF_SIZE];
+	size_t cpu = (size_t) m->private;
+
+	if (is_muncher_valid) {
+		muncher.dump_data(procfs_buffer, sizeof procfs_buffer, cpu);
+		seq_puts(m, procfs_buffer);
+	}
+
 	return 0;
 }
 
@@ -57,14 +62,14 @@ int munch_register_procfs() {
 		return -ENOMEM; 
 	} 
 
-	int cpu;
+	size_t cpu;
 	for_each_cpu(cpu, cpu_possible_mask) {
 		char file_name[10];
 		memset(file_name, 0, sizeof file_name);
 		sprintf(file_name, "%d", cpu);
 
 		static struct proc_dir_entry *munch_procfs_child; 
-		munch_procfs_child = proc_create_data(file_name, 0444, munch_procfs, &munch_proc_ops, (void *) (long) cpu); 
+		munch_procfs_child = proc_create_data(file_name, 0444, munch_procfs, &munch_proc_ops, (void *) cpu); 
 		if (munch_procfs_child == NULL) { 
 			pr_alert("Error:Could not initialize /proc/%s/%s\n", PROCFS_NAME, PROCFS_NAME); 
 			return -ENOMEM; 

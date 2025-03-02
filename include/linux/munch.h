@@ -14,7 +14,7 @@ struct meal_descriptor {
 struct munch_ops {
 	void (*munch64) (struct meal_descriptor *, enum munch_location, uint64_t);
 	void (*open_meal) (size_t, struct meal_descriptor *);
-	ssize_t (*dump_data) (char __user *buf, size_t length);
+	ssize_t (*dump_data) (char *buf, size_t length, size_t cpu);
 };
 
 void munch64(struct meal_descriptor *, enum munch_location, uint64_t);

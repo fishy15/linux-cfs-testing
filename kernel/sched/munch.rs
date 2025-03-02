@@ -9,7 +9,6 @@ use kernel::{bindings, kvec, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
 use kernel::alloc::flags::GFP_KERNEL;
 use kernel::error::{Result, Error};
-use kernel::uaccess::UserSlice;
 
 struct RustMunchState {
     bufs: Option<KVec<RingBuffer<LoadBalanceInfo>>>,
@@ -99,11 +98,18 @@ impl MunchOps for RustMunch {
         return md_invalid();
     }
 
-    fn dump_data(buf: UserSlice) -> Result<isize, Error> {
-        let mut writer = buf.writer();
+    fn dump_data(buf: &mut [u8], _cpu: usize) -> Result<isize, Error> {
         let message = "muncher\n".as_bytes();
-        let result = writer.write_slice(message);
-        result.map(|_| message.len().try_into().unwrap())
+        let message_len = message.len();
+
+        // manual checked needed since split_at_mut is unchecked
+        if message_len > buf.len() {
+            return Err(ENOMEM);
+        }
+        let (init_buffer, _) = buf.split_at_mut(message_len);
+
+        init_buffer.copy_from_slice(message);
+        return Ok(message_len.try_into().unwrap());
     }
 }
 
