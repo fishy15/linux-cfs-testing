@@ -3,6 +3,7 @@
 //! munch
 
 use core::clone::Clone;
+use core::fmt::Debug;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::option::Option;
 use kernel::{bindings, kvec, munch_ops::*, prelude::*};
@@ -12,6 +13,20 @@ use kernel::error::{Result, Error};
 
 struct RustMunchState {
     bufs: Option<KVec<RingBuffer<LoadBalanceInfo>>>,
+}
+
+#[derive(Debug)]
+enum DumpError {
+    CpuOutOfBounds,
+    KVecOutOfMemory,
+}
+
+impl RustMunchState {
+    fn get_data_for_cpu(&self, cpu: usize) -> Result<KVec<u8>, DumpError> {
+        let bufs = self.bufs.as_ref().unwrap();
+        let buf = bufs.get(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        return Ok(buf.dump_info()?);
+    }
 }
 
 static mut RUST_MUNCH_STATE: RustMunchState = RustMunchState {
@@ -98,17 +113,22 @@ impl MunchOps for RustMunch {
         return md_invalid();
     }
 
-    fn dump_data(buf: &mut [u8], _cpu: usize) -> Result<isize, Error> {
-        let message = "muncher\n".as_bytes();
+    fn dump_data(buf: &mut [u8], cpu: usize) -> Result<isize, Error> {
+        let data = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu) };
+        let message = data.or_else(|e| {
+            pr_info!("munch error: {:?}", e);
+            Err(EINVAL)
+        })?;
         let message_len = message.len();
 
         // manual checked needed since split_at_mut is unchecked
         if message_len > buf.len() {
+            pr_info!("munch error: buffer too small, wants {}, needs {}", message_len, buf.len());
             return Err(ENOMEM);
         }
         let (init_buffer, _) = buf.split_at_mut(message_len);
 
-        init_buffer.copy_from_slice(message);
+        init_buffer.copy_from_slice(&message);
         return Ok(message_len.try_into().unwrap());
     }
 }
@@ -192,7 +212,7 @@ impl<T: Reset + Clone> RingBuffer<T> {
         return RingBuffer {
             cpu: cpu,
             entries: kvec![T::new(); n].expect("allocation error"),
-            head: 0.into(), // will be shifted to 0 on first allocation
+            head: 0.into(),
         };
     }
 
@@ -207,5 +227,17 @@ impl<T: Reset + Clone> RingBuffer<T> {
 
     fn get(&mut self, entry_idx: usize) -> &mut T {
         return &mut self.entries[entry_idx];
+    }
+
+    fn dump_info(&self) -> Result<KVec<u8>, DumpError> {
+        let mut result = kvec![];
+        let message = "munch cpu\n";
+
+        let append_result = result.extend_from_slice(message.as_bytes(), GFP_KERNEL);
+        if let Ok(_) = append_result {
+            return Ok(result);
+        } else {
+            return Err(DumpError::KVecOutOfMemory);
+        }
     }
 }
