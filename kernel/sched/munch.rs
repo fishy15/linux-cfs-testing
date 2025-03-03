@@ -13,7 +13,7 @@ use kernel::alloc::flags::GFP_KERNEL;
 use kernel::error::{Result, Error};
 
 struct RustMunchState {
-    bufs: Option<KVec<RingBuffer<LoadBalanceInfo>>>,
+    bufs: Option<KVec<RingBuffer>>,
 }
 
 #[derive(Debug)]
@@ -72,11 +72,11 @@ impl kernel::Module for RustMunch {
             bindings::set_muncher(&mut ret.table);
 
             let cpu_count = bindings::nr_cpu_ids as usize;
-            let mut bufs = KVec::<RingBuffer<LoadBalanceInfo>>
+            let mut bufs = KVec::<RingBuffer>
                 ::with_capacity(cpu_count, GFP_KERNEL)
                 .expect("alloc failure");
             for i in 0..cpu_count {
-                bufs.push(RingBuffer::<LoadBalanceInfo>::new(256, i), GFP_KERNEL)
+                bufs.push(RingBuffer::new(256, i), GFP_KERNEL)
                     .expect("alloc failure (should not happen)");
             }
 
@@ -165,18 +165,18 @@ trait Reset {
 }
 
 // can only write when the readonly flag is false
-struct RingBufferLock<T: Reset> {
+struct RingBufferLock {
     readonly: AtomicBool,
-    info: RingBuffer<T>,
+    info: RingBuffer,
 }
 
-struct RingBufferReader<'a, T: Reset> {
-    buffer: &'a mut RingBuffer<T>,
+struct RingBufferReader<'a> {
+    buffer: &'a mut RingBuffer,
     readonly: &'a mut AtomicBool,
 }
 
-impl<'a, T: Reset> RingBufferReader<'a, T> {
-    fn new(buffer: &'a mut RingBuffer<T>, readonly: &'a mut AtomicBool) -> Self {
+impl<'a> RingBufferReader<'a> {
+    fn new(buffer: &'a mut RingBuffer, readonly: &'a mut AtomicBool) -> Self {
         readonly.store(true, Ordering::SeqCst);
         RingBufferReader {
             buffer: buffer,
@@ -185,64 +185,64 @@ impl<'a, T: Reset> RingBufferReader<'a, T> {
     }
 }
 
-impl<'a, T: Reset> Deref for RingBufferReader<'a, T> {
-    type Target = RingBuffer<T>;
-    fn deref(&self) -> &RingBuffer<T> {
+impl<'a> Deref for RingBufferReader<'a> {
+    type Target = RingBuffer;
+    fn deref(&self) -> &RingBuffer {
         return self.buffer;
     }
 }
 
-impl<'a, T: Reset> Drop for RingBufferReader<'a, T> {
+impl<'a> Drop for RingBufferReader<'a> {
     fn drop(&mut self) {
         self.buffer.reset();
         self.readonly.store(false, Ordering::SeqCst);
     }
 }
 
-struct RingBufferWriter<'a, T: Reset> {
-    buffer: &'a mut RingBuffer<T>,
+struct RingBufferWriter<'a> {
+    buffer: &'a mut RingBuffer,
 }
 
-impl<'a, T: Reset> RingBufferWriter<'a, T> {
-    fn new(buffer: &'a mut RingBuffer<T>) -> Self {
+impl<'a> RingBufferWriter<'a> {
+    fn new(buffer: &'a mut RingBuffer) -> Self {
         RingBufferWriter {
             buffer: buffer,
         }
     }
 }
 
-impl<'a, T: Reset> Deref for RingBufferWriter<'a, T> {
-    type Target = RingBuffer<T>;
-    fn deref(&self) -> &RingBuffer<T> {
-        return self.info;
+impl<'a> Deref for RingBufferWriter<'a> {
+    type Target = RingBuffer;
+    fn deref(&self) -> &RingBuffer {
+        return self.buffer;
     }
 }
 
-impl<'a, T: Reset> DerefMut for RingBufferWriter<'a, T> {
-    fn deref_mut(&mut self) -> &mut RingBuffer<T> {
-        return self.info;
+impl<'a> DerefMut for RingBufferWriter<'a> {
+    fn deref_mut(&mut self) -> &mut RingBuffer {
+        return self.buffer;
     }
 }
 
-impl<'a, T: Reset> RingBufferLock<T> {
+impl<'a> RingBufferLock {
     fn new(n: usize, cpu: usize) -> Self {
         RingBufferLock {
             readonly: false.into(),
-            info: RingBuffer::<T>::new(n, cpu),
+            info: RingBuffer::new(n, cpu),
         }
     }
 
-    fn access_writer(&'a mut self) -> Option<RingBufferWriter<'a, T>> {
+    fn access_writer(&'a mut self) -> Option<RingBufferWriter<'a>> {
         let is_readonly = self.readonly.load(Ordering::SeqCst);
         if is_readonly {
             return None;
         } else {
-            return Some(RingBufferWriter::<T>::new(&mut self.info));
+            return Some(RingBufferWriter::new(&mut self.info));
         }
     }
 
-    fn access_reader(&'a mut self) -> RingBufferReader<'a, T> {
-        return RingBufferReader::<T>::new(&mut self.info, &mut self.readonly);
+    fn access_reader(&'a mut self) -> RingBufferReader<'a> {
+        return RingBufferReader::new(&mut self.info, &mut self.readonly);
     }
 }
 
@@ -271,17 +271,17 @@ impl Reset for LoadBalanceInfo {
     }
 }
 
-struct RingBuffer<T: Reset> {
+struct RingBuffer {
     cpu: usize,
-    entries: KVec<T>,
+    entries: KVec<LoadBalanceInfo>,
     head: AtomicUsize,
 }
 
-impl<T: Reset + Clone> RingBuffer<T> {
+impl RingBuffer {
     fn new(n: usize, cpu: usize) -> Self {
         return RingBuffer {
             cpu: cpu,
-            entries: kvec![T::new(); n].expect("allocation error"),
+            entries: kvec![LoadBalanceInfo::new(); n].expect("allocation error"),
             head: 0.into(),
         };
     }
@@ -295,12 +295,12 @@ impl<T: Reset + Clone> RingBuffer<T> {
         }
     }
 
-    fn get(&mut self, entry_idx: usize) -> &mut T {
+    fn get(&mut self, entry_idx: usize) -> &mut LoadBalanceInfo {
         return &mut self.entries[entry_idx];
     }
 
     fn reset(&mut self) {
-        self.entries.for_each(|e| e.reset());
+        self.entries.iter_mut().for_each(|e| e.reset());
         self.head.store(0, Ordering::SeqCst);
     }
 }
@@ -428,7 +428,7 @@ impl BufferWrite for str {
     }
 }
 
-impl<T: Reset> BufferWrite for &RingBuffer<T> {
+impl BufferWrite for &RingBuffer {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         define_write!(buffer,
             cpu: &self.cpu,
