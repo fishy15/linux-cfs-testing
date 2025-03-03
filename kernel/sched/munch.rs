@@ -193,28 +193,6 @@ struct RingBuffer<T: Reset> {
     head: AtomicUsize,
 }
 
-// locations
-
-/*
-fn open_meal() -> MealDescriptor {
-    return index;
-}
-
-fn munch(md: MealDescriptor, location: Location, value: u64) {
-    let entry = &mut ring_buffer[md];
-    match location {
-        CPU_NUMBER => entry.cpu_number = value,
-        CPU_LOAD => entry.cpu_load = value,
-    }
-}
-
-fn munch_index(md: MealDescriptor, location: Location, index: usize, value: 64) {
-    match location {
-        GROUP_LOAD => entry.groups[index].group_load = value
-    }
-}
-*/
-
 impl<T: Reset + Clone> RingBuffer<T> {
     fn new(n: usize, cpu: usize) -> Self {
         return RingBuffer {
@@ -238,9 +216,9 @@ impl<T: Reset + Clone> RingBuffer<T> {
     }
 
     fn dump_info(&self, writer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
-        writer.write_str("{")?;
-        writer.write_key_u64("cpu", self.cpu as u64)?;
-        writer.write_str("}\n")?;
+        writer.write("{")?;
+        writer.write_key("cpu", &(self.cpu as u64))?;
+        writer.write("}\n")?;
         Ok(())
     }
 }
@@ -251,6 +229,92 @@ impl<T: Reset + Clone> RingBuffer<T> {
 struct BufferWriter<'a> {
     buffer: &'a mut [u8],
     head: usize,
+}
+
+trait BufferWrite {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError>;
+}
+
+impl BufferWrite for u64 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        let val = *self;
+        if val == 0 {
+            buffer.write_byte('0' as u8)
+        } else {
+            let mut cur_val = val;
+            let mut number_buffer = [0 as u8; 20]; // max number of decimal digits in a u64
+            let mut idx: usize = 0;
+
+            while cur_val != 0 {
+                number_buffer[idx] = (cur_val % 10) as u8;
+                cur_val /= 10;
+                idx += 1;
+            }
+            
+            let filled_slice = &number_buffer[0..idx]; 
+            filled_slice.iter().rev().try_for_each(|dig| buffer.write_byte('0' as u8 + *dig))
+        }
+    }
+}
+
+impl BufferWrite for u8 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+}
+impl BufferWrite for u16 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+}
+impl BufferWrite for u32 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+}
+
+impl BufferWrite for i64 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        let val = *self;
+        if val == 0 {
+            buffer.write_byte('0' as u8)
+        } else {
+            if val < 0 {
+                buffer.write_byte('-' as u8)?;
+            }
+
+            let mut cur_val = val;
+            let mut number_buffer = [0 as u8; 20]; // max number of decimal digits in a u64
+            let mut idx: usize = 0;
+
+            while cur_val != 0 {
+                number_buffer[idx] = (cur_val % 10) as u8;
+                cur_val /= 10;
+                idx += 1;
+            }
+
+            let filled_slice = &number_buffer[0..idx]; 
+            filled_slice.iter().rev().try_for_each(|dig| buffer.write_byte('0' as u8 + *dig))
+        }
+    }
+}
+
+impl BufferWrite for i8 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+}
+impl BufferWrite for i16 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+}
+impl BufferWrite for i32 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+}
+
+impl BufferWrite for char {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        let c = *self;
+        let as_byte: u8 = c.try_into().or_else(|_| Err(DumpError::NotSingleByteChar(c)))?;
+        buffer.write_byte(as_byte)
+    }
+}
+
+impl BufferWrite for str {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        self.chars().try_for_each(|c| buffer.write(&c))
+    }
 }
 
 impl<'a> BufferWriter<'a> {
@@ -271,63 +335,16 @@ impl<'a> BufferWriter<'a> {
         }
     }
 
-    fn write_key_u64(&mut self, key: &str, val: u64) -> Result<(), DumpError> {
-        self.write_str("\"")?;
-        self.write_str(key)?;
-        self.write_str("\": ")?;
-        self.write_u64(val)?;
+    fn write<T: BufferWrite + ?Sized>(&mut self, val: &T) -> Result<(), DumpError> {
+        val.write(self)
+    }
+
+    fn write_key<T: BufferWrite + ?Sized>(&mut self, key: &str, val: &T) -> Result<(), DumpError> {
+        self.write("\"")?;
+        self.write(key)?;
+        self.write("\": ")?;
+        self.write(val)?;
         Ok(())
-    }
-
-    fn write_u64(&mut self, val: u64) -> Result<(), DumpError> {
-        if val == 0 {
-            self.write_byte('0' as u8)
-        } else {
-            let mut cur_val = val;
-            let mut number_buffer = [0 as u8; 20]; // max number of decimal digits in a u64
-            let mut idx: usize = 0;
-
-            while cur_val != 0 {
-                number_buffer[idx] = (cur_val % 10) as u8;
-                cur_val /= 10;
-                idx += 1;
-            }
-            
-            let filled_slice = &number_buffer[0..idx]; 
-            filled_slice.iter().rev().try_for_each(|dig| self.write_byte('0' as u8 + *dig))
-        }
-    }
-
-    /*
-    fn write_i64(&mut self, val: i64) -> Result<(), DumpError> {
-        if val == 0 {
-            self.write_byte('0' as u8)
-        } else {
-            if val < 0 {
-                self.write_byte('-' as u8)?;
-            }
-
-            let mut cur_val = val;
-            let mut number_buffer = [0 as u8; 20]; // max number of decimal digits in a u64
-            let mut idx: usize = 0;
-
-            while cur_val != 0 {
-                number_buffer[idx] = (cur_val % 10) as u8;
-                cur_val /= 10;
-                idx += 1;
-            }
-
-            let filled_slice = &number_buffer[0..idx]; 
-            filled_slice.iter().rev().try_for_each(|dig| self.write_byte('0' as u8 + *dig))
-        }
-    }
-    */
-
-    fn write_str(&mut self, s: &str) -> Result<(), DumpError> {
-        s.chars().try_for_each(|c| {
-            let as_byte: u8 = c.try_into().or_else(|_| Err(DumpError::NotSingleByteChar(c)))?;
-            self.write_byte(as_byte)
-        })
     }
 }
 
