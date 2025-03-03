@@ -37,10 +37,11 @@ impl DumpError {
 }
 
 impl RustMunchState {
-    fn get_data_for_cpu(&self, cpu: usize, writer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
+    fn get_data_for_cpu(&self, cpu: usize, buffer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
         let bufs = self.bufs.as_ref().unwrap();
         let buf = bufs.get(cpu).ok_or(DumpError::CpuOutOfBounds)?;
-        buf.dump_info(writer)
+        buffer.write(&buf)?;
+        buffer.write(&'\n')
     }
 }
 
@@ -214,13 +215,6 @@ impl<T: Reset + Clone> RingBuffer<T> {
     fn get(&mut self, entry_idx: usize) -> &mut T {
         return &mut self.entries[entry_idx];
     }
-
-    fn dump_info(&self, writer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
-        writer.write("{")?;
-        writer.write_key("cpu", &(self.cpu as u64))?;
-        writer.write("}\n")?;
-        Ok(())
-    }
 }
 
 // Writer Buffer
@@ -233,6 +227,29 @@ struct BufferWriter<'a> {
 
 trait BufferWrite {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError>;
+}
+
+macro_rules! write_body {
+    ($buffer:ident, $k:ident: $v:expr) => {
+        $buffer.write(&'"')?;
+        $buffer.write(stringify!($k))?;
+        $buffer.write(&'"')?;
+        $buffer.write(":")?;
+        $buffer.write($v)?;
+    };
+    ($buffer:ident, $k:ident: $v:expr, $($ks:ident: $vs:expr),+) => {
+        write_body!($buffer, $k: $v);
+        $buffer.write(",")?;
+        write_body!($buffer, $($ks: $vs),+);
+    };
+}
+
+macro_rules! define_write {
+    ($buffer:ident, $($key:ident: $value:expr),+) => {
+        $buffer.write(&'{')?; 
+        write_body!($buffer, $($key: $value),+);
+        $buffer.write(&'}')?;
+    };
 }
 
 impl BufferWrite for u64 {
@@ -264,6 +281,9 @@ impl BufferWrite for u16 {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
 }
 impl BufferWrite for u32 {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+}
+impl BufferWrite for usize {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
 }
 
@@ -302,6 +322,9 @@ impl BufferWrite for i16 {
 impl BufferWrite for i32 {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
 }
+impl BufferWrite for isize {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+}
 
 impl BufferWrite for char {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
@@ -314,6 +337,17 @@ impl BufferWrite for char {
 impl BufferWrite for str {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         self.chars().try_for_each(|c| buffer.write(&c))
+    }
+}
+
+impl<T: Reset> BufferWrite for &RingBuffer<T> {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        define_write!(buffer,
+            cpu: &self.cpu,
+            cpu: &self.cpu,
+            cpu: &self.cpu
+        );
+        Ok(())
     }
 }
 
@@ -339,6 +373,7 @@ impl<'a> BufferWriter<'a> {
         val.write(self)
     }
 
+    /*
     fn write_key<T: BufferWrite + ?Sized>(&mut self, key: &str, val: &T) -> Result<(), DumpError> {
         self.write("\"")?;
         self.write(key)?;
@@ -346,5 +381,6 @@ impl<'a> BufferWriter<'a> {
         self.write(val)?;
         Ok(())
     }
+    */
 }
 
