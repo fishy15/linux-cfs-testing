@@ -13,7 +13,7 @@ use kernel::alloc::flags::GFP_KERNEL;
 use kernel::error::{Result, Error};
 
 struct RustMunchState {
-    bufs: Option<KVec<RingBuffer>>,
+    bufs: Option<KVec<RingBufferLock>>,
 }
 
 #[derive(Debug)]
@@ -38,9 +38,11 @@ impl DumpError {
 }
 
 impl RustMunchState {
-    fn get_data_for_cpu(&self, cpu: usize, buffer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
-        let bufs = self.bufs.as_ref().unwrap();
-        let buf = bufs.get(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+    fn get_data_for_cpu(&mut self, cpu: usize, buffer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
+        let bufs = self.bufs.as_mut().unwrap();
+        let cpu_buf_reader = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        let buf_reader = &cpu_buf_reader.access_reader();
+        let buf: &RingBuffer = &buf_reader;
         buffer.write(&buf)?;
         buffer.write(&'\n')
     }
@@ -72,11 +74,11 @@ impl kernel::Module for RustMunch {
             bindings::set_muncher(&mut ret.table);
 
             let cpu_count = bindings::nr_cpu_ids as usize;
-            let mut bufs = KVec::<RingBuffer>
+            let mut bufs = KVec::<RingBufferLock>
                 ::with_capacity(cpu_count, GFP_KERNEL)
                 .expect("alloc failure");
             for i in 0..cpu_count {
-                bufs.push(RingBuffer::new(256, i), GFP_KERNEL)
+                bufs.push(RingBufferLock::new(256, i), GFP_KERNEL)
                     .expect("alloc failure (should not happen)");
             }
 
@@ -113,8 +115,9 @@ impl MunchOps for RustMunch {
             unsafe {
                 if let Some(bufs) = &mut RUST_MUNCH_STATE.bufs {
                     let buf = &mut bufs[cpu_number];
-                    let entry = &mut buf.get(entry_idx);
-                    entry.set_value(&location, x);
+                    buf.access_writer()
+                        .map(|b| b.buffer.get(entry_idx))
+                        .map(|e| e.set_value(&location, x));
                 }
             }
         }
@@ -124,7 +127,12 @@ impl MunchOps for RustMunch {
         unsafe {
             if let Some(bufs) = &mut RUST_MUNCH_STATE.bufs {
                 let buf = &mut bufs[cpu_number];
-                return buf.open_meal_descriptor();
+                let meal_descriptor = buf.access_writer().map(|mut b| b.open_meal_descriptor());
+                if let Some(md) = meal_descriptor {
+                    return md;
+                } else {
+                    return md_invalid();
+                }
             }
         }
         return md_invalid();
