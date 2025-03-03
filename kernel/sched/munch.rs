@@ -165,85 +165,84 @@ trait Reset {
 }
 
 // can only write when the readonly flag is false
-struct LoadBalanceInfoLock {
+struct RingBufferLock<T: Reset> {
     readonly: AtomicBool,
-    info: LoadBalanceInfo,
+    info: RingBuffer<T>,
 }
 
-struct LBInfoRef<'a> {
-    info: &'a mut LoadBalanceInfo,
+struct RingBufferReader<'a, T: Reset> {
+    buffer: &'a mut RingBuffer<T>,
     readonly: &'a mut AtomicBool,
 }
 
-impl<'a> LBInfoRef<'a> {
-    fn new(info: &'a mut LoadBalanceInfo, readonly: &'a mut AtomicBool) -> Self {
+impl<'a, T: Reset> RingBufferReader<'a, T> {
+    fn new(buffer: &'a mut RingBuffer<T>, readonly: &'a mut AtomicBool) -> Self {
         readonly.store(true, Ordering::SeqCst);
-        LBInfoRef {
-            info: info,
+        RingBufferReader {
+            buffer: buffer,
             readonly: readonly,
         }
     }
 }
 
-
-impl<'a> Deref for LBInfoRef<'a> {
-    type Target = LoadBalanceInfo;
-    fn deref(&self) -> &LoadBalanceInfo {
-        return self.info;
+impl<'a, T: Reset> Deref for RingBufferReader<'a, T> {
+    type Target = RingBuffer<T>;
+    fn deref(&self) -> &RingBuffer<T> {
+        return self.buffer;
     }
 }
 
-impl<'a> Drop for LBInfoRef<'a> {
+impl<'a, T: Reset> Drop for RingBufferReader<'a, T> {
     fn drop(&mut self) {
-        self.info.reset();
+        self.buffer.reset();
         self.readonly.store(false, Ordering::SeqCst);
     }
 }
 
-struct LBInfoRefMut<'a> {
-    info: &'a mut LoadBalanceInfo,
+struct RingBufferWriter<'a, T: Reset> {
+    buffer: &'a mut RingBuffer<T>,
 }
 
-impl<'a> LBInfoRefMut<'a> {
-    fn new(info: &'a mut LoadBalanceInfo) -> Self {
-        LBInfoRefMut {
-            info: info,
+impl<'a, T: Reset> RingBufferWriter<'a, T> {
+    fn new(buffer: &'a mut RingBuffer<T>) -> Self {
+        RingBufferWriter {
+            buffer: buffer,
         }
     }
 }
 
-impl<'a> Deref for LBInfoRefMut<'a> {
-    type Target = LoadBalanceInfo;
-    fn deref(&self) -> &LoadBalanceInfo {
+impl<'a, T: Reset> Deref for RingBufferWriter<'a, T> {
+    type Target = RingBuffer<T>;
+    fn deref(&self) -> &RingBuffer<T> {
         return self.info;
     }
 }
 
-impl<'a> DerefMut for LBInfoRefMut<'a> {
-    fn deref_mut(&mut self) -> &mut LoadBalanceInfo {
+impl<'a, T: Reset> DerefMut for RingBufferWriter<'a, T> {
+    fn deref_mut(&mut self) -> &mut RingBuffer<T> {
         return self.info;
     }
 }
 
-impl<'a> LoadBalanceInfoLock {
-    fn new() -> Self {
-        LoadBalanceInfoLock {
+impl<'a, T: Reset> RingBufferLock<T> {
+    fn new(n: usize, cpu: usize) -> Self {
+        RingBufferLock {
             readonly: false.into(),
-            info: LoadBalanceInfo::new(),
+            info: RingBuffer::<T>::new(n, cpu),
         }
     }
 
-    fn access_writer(&'a mut self) -> Option<LBInfoRefMut<'a>> {
+    fn access_writer(&'a mut self) -> Option<RingBufferWriter<'a, T>> {
         let is_readonly = self.readonly.load(Ordering::SeqCst);
         if is_readonly {
             return None;
         } else {
-            return Some(LBInfoRefMut::new(&mut self.info));
+            return Some(RingBufferWriter::<T>::new(&mut self.info));
         }
     }
 
-    fn access_reader(&'a mut self) -> LBInfoRef<'a> {
-        return LBInfoRef::new(&mut self.info, &mut self.readonly);
+    fn access_reader(&'a mut self) -> RingBufferReader<'a, T> {
+        return RingBufferReader::<T>::new(&mut self.info, &mut self.readonly);
     }
 }
 
@@ -298,6 +297,11 @@ impl<T: Reset + Clone> RingBuffer<T> {
 
     fn get(&mut self, entry_idx: usize) -> &mut T {
         return &mut self.entries[entry_idx];
+    }
+
+    fn reset(&mut self) {
+        self.entries.for_each(|e| e.reset());
+        self.head.store(0, Ordering::SeqCst);
     }
 }
 
