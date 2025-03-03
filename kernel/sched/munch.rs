@@ -18,14 +18,29 @@ struct RustMunchState {
 #[derive(Debug)]
 enum DumpError {
     CpuOutOfBounds,
-    KVecOutOfMemory,
+    BufferOutOfBounds,
+    NotSingleByteChar(char),
+}
+
+impl DumpError {
+    fn to_errno<T>(&self) -> Result<T, Error> {
+        return Err(EINVAL);
+    }
+
+    fn print_error(&self) {
+        match self {
+            DumpError::CpuOutOfBounds => pr_alert!("munch error: cpu is invalid"),
+            DumpError::BufferOutOfBounds => pr_alert!("munch error: buffer ran out of space"),
+            DumpError::NotSingleByteChar(c) => pr_alert!("munch error: char '{}' cannot be representd as a single byte", c),
+        }
+    }
 }
 
 impl RustMunchState {
-    fn get_data_for_cpu(&self, cpu: usize) -> Result<KVec<u8>, DumpError> {
+    fn get_data_for_cpu(&self, cpu: usize, writer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
         let bufs = self.bufs.as_ref().unwrap();
         let buf = bufs.get(cpu).ok_or(DumpError::CpuOutOfBounds)?;
-        return Ok(buf.dump_info()?);
+        buf.dump_info(writer)
     }
 }
 
@@ -114,22 +129,15 @@ impl MunchOps for RustMunch {
     }
 
     fn dump_data(buf: &mut [u8], cpu: usize) -> Result<isize, Error> {
-        let data = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu) };
-        let message = data.or_else(|e| {
-            pr_info!("munch error: {:?}", e);
-            Err(EINVAL)
-        })?;
-        let message_len = message.len();
-
-        // manual checked needed since split_at_mut is unchecked
-        if message_len > buf.len() {
-            pr_info!("munch error: buffer too small, wants {}, needs {}", message_len, buf.len());
-            return Err(ENOMEM);
+        let mut writer = BufferWriter::new(buf);
+        let result = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu, &mut writer) };
+        match result {
+            Ok(_) => Ok(writer.head.try_into().unwrap()),
+            Err(e) => {
+                e.print_error();
+                return e.to_errno();
+            }
         }
-        let (init_buffer, _) = buf.split_at_mut(message_len);
-
-        init_buffer.copy_from_slice(&message);
-        return Ok(message_len.try_into().unwrap());
     }
 }
 
@@ -229,15 +237,97 @@ impl<T: Reset + Clone> RingBuffer<T> {
         return &mut self.entries[entry_idx];
     }
 
-    fn dump_info(&self) -> Result<KVec<u8>, DumpError> {
-        let mut result = kvec![];
-        let message = "munch cpu\n";
-
-        let append_result = result.extend_from_slice(message.as_bytes(), GFP_KERNEL);
-        if let Ok(_) = append_result {
-            return Ok(result);
-        } else {
-            return Err(DumpError::KVecOutOfMemory);
-        }
+    fn dump_info(&self, writer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
+        writer.write_str("{")?;
+        writer.write_key_u64("cpu", self.cpu as u64)?;
+        writer.write_str("}\n")?;
+        Ok(())
     }
 }
+
+// Writer Buffer
+// Contains a reference to some other buffer and an index
+// Various methods that try to write
+struct BufferWriter<'a> {
+    buffer: &'a mut [u8],
+    head: usize,
+}
+
+impl<'a> BufferWriter<'a> {
+    fn new(buf: &'a mut [u8]) -> Self {
+        BufferWriter {
+            buffer: buf,
+            head: 0,
+        }
+    }
+
+    fn write_byte(&mut self, byte: u8) -> Result<(), DumpError> {
+        if self.head >= self.buffer.len() {
+            Err(DumpError::BufferOutOfBounds)
+        } else {
+            self.buffer[self.head] = byte;
+            self.head += 1;
+            Ok(())
+        }
+    }
+
+    fn write_key_u64(&mut self, key: &str, val: u64) -> Result<(), DumpError> {
+        self.write_str("\"")?;
+        self.write_str(key)?;
+        self.write_str("\": ")?;
+        self.write_u64(val)?;
+        Ok(())
+    }
+
+    fn write_u64(&mut self, val: u64) -> Result<(), DumpError> {
+        if val == 0 {
+            self.write_byte('0' as u8)
+        } else {
+            let mut cur_val = val;
+            let mut number_buffer = [0 as u8; 20]; // max number of decimal digits in a u64
+            let mut idx: usize = 0;
+
+            while cur_val != 0 {
+                number_buffer[idx] = (cur_val % 10) as u8;
+                cur_val /= 10;
+                idx += 1;
+            }
+            
+            let filled_slice = &number_buffer[0..idx]; 
+            filled_slice.iter().rev().try_for_each(|dig| self.write_byte('0' as u8 + *dig))
+        }
+    }
+
+    /*
+    fn write_i64(&mut self, val: i64) -> Result<(), DumpError> {
+        if val == 0 {
+            self.write_byte('0' as u8)
+        } else {
+            if val < 0 {
+                self.write_byte('-' as u8)?;
+            }
+
+            let mut cur_val = val;
+            let mut number_buffer = [0 as u8; 20]; // max number of decimal digits in a u64
+            let mut idx: usize = 0;
+
+            while cur_val != 0 {
+                number_buffer[idx] = (cur_val % 10) as u8;
+                cur_val /= 10;
+                idx += 1;
+            }
+
+            let filled_slice = &number_buffer[0..idx]; 
+            filled_slice.iter().rev().try_for_each(|dig| self.write_byte('0' as u8 + *dig))
+        }
+    }
+    */
+
+    fn write_str(&mut self, s: &str) -> Result<(), DumpError> {
+        s.chars().try_for_each(|c| {
+            let as_byte: u8 = c.try_into().or_else(|_| Err(DumpError::NotSingleByteChar(c)))?;
+            self.write_byte(as_byte)
+        })
+    }
+}
+
