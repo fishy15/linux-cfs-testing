@@ -4,7 +4,8 @@
 
 use core::clone::Clone;
 use core::fmt::Debug;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::ops::{Deref, DerefMut, Drop};
 use core::option::Option;
 use kernel::{bindings, kvec, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
@@ -163,6 +164,89 @@ trait Reset {
     fn new() -> Self;
 }
 
+// can only write when the readonly flag is false
+struct LoadBalanceInfoLock {
+    readonly: AtomicBool,
+    info: LoadBalanceInfo,
+}
+
+struct LBInfoRef<'a> {
+    info: &'a mut LoadBalanceInfo,
+    readonly: &'a mut AtomicBool,
+}
+
+impl<'a> LBInfoRef<'a> {
+    fn new(info: &'a mut LoadBalanceInfo, readonly: &'a mut AtomicBool) -> Self {
+        readonly.store(true, Ordering::SeqCst);
+        LBInfoRef {
+            info: info,
+            readonly: readonly,
+        }
+    }
+}
+
+
+impl<'a> Deref for LBInfoRef<'a> {
+    type Target = LoadBalanceInfo;
+    fn deref(&self) -> &LoadBalanceInfo {
+        return self.info;
+    }
+}
+
+impl<'a> Drop for LBInfoRef<'a> {
+    fn drop(&mut self) {
+        self.info.reset();
+        self.readonly.store(false, Ordering::SeqCst);
+    }
+}
+
+struct LBInfoRefMut<'a> {
+    info: &'a mut LoadBalanceInfo,
+}
+
+impl<'a> LBInfoRefMut<'a> {
+    fn new(info: &'a mut LoadBalanceInfo) -> Self {
+        LBInfoRefMut {
+            info: info,
+        }
+    }
+}
+
+impl<'a> Deref for LBInfoRefMut<'a> {
+    type Target = LoadBalanceInfo;
+    fn deref(&self) -> &LoadBalanceInfo {
+        return self.info;
+    }
+}
+
+impl<'a> DerefMut for LBInfoRefMut<'a> {
+    fn deref_mut(&mut self) -> &mut LoadBalanceInfo {
+        return self.info;
+    }
+}
+
+impl<'a> LoadBalanceInfoLock {
+    fn new() -> Self {
+        LoadBalanceInfoLock {
+            readonly: false.into(),
+            info: LoadBalanceInfo::new(),
+        }
+    }
+
+    fn access_writer(&'a mut self) -> Option<LBInfoRefMut<'a>> {
+        let is_readonly = self.readonly.load(Ordering::SeqCst);
+        if is_readonly {
+            return None;
+        } else {
+            return Some(LBInfoRefMut::new(&mut self.info));
+        }
+    }
+
+    fn access_reader(&'a mut self) -> LBInfoRef<'a> {
+        return LBInfoRef::new(&mut self.info, &mut self.readonly);
+    }
+}
+
 #[derive(Clone)]
 struct LoadBalanceInfo {
     cpu_number: Option<u64>,
@@ -245,7 +329,7 @@ macro_rules! write_body {
 }
 
 macro_rules! define_write {
-    ($buffer:ident, $($key:ident: $value:expr),+) => {
+    ($buffer:ident, $($key:ident: $value:expr),+ $(,)?) => {
         $buffer.write(&'{')?; 
         write_body!($buffer, $($key: $value),+);
         $buffer.write(&'}')?;
@@ -345,7 +429,7 @@ impl<T: Reset> BufferWrite for &RingBuffer<T> {
         define_write!(buffer,
             cpu: &self.cpu,
             cpu: &self.cpu,
-            cpu: &self.cpu
+            cpu: &self.cpu,
         );
         Ok(())
     }
