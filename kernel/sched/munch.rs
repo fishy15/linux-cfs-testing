@@ -440,8 +440,7 @@ impl BufferWrite for &RingBuffer {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         define_write!(buffer,
             cpu: &self.cpu,
-            cpu: &self.cpu,
-            cpu: &self.cpu,
+            entries: &self.entries,
         );
         Ok(())
     }
@@ -450,12 +449,12 @@ impl BufferWrite for &RingBuffer {
 impl<T: BufferWrite> BufferWrite for KVec<T> {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         buffer.write(&'[')?;
-        let mut put_comma = true;
-        for &entry in self.iter() {
+        let mut put_comma = false;
+        for entry in self.iter() {
             if put_comma {
                 buffer.write(&',')?;
             }
-            buffer.write(&entry)?;
+            buffer.write(entry)?;
             put_comma = true;
         }
         buffer.write(&']')?;
@@ -465,15 +464,15 @@ impl<T: BufferWrite> BufferWrite for KVec<T> {
 
 impl BufferWrite for RingBuffer {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
-        define_write!(buffer,
-            entries: &self.entries,
-        );
+        // skip adding a key, this should directly represent the entriess
+        buffer.write(&self.entries)?;
         Ok(())
     }
 }
 
 impl BufferWrite for LoadBalanceInfo {
-    fn write(&self, _buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        buffer.write("null")?;
         Ok(())
     }
 }
