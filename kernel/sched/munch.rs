@@ -178,55 +178,55 @@ struct RingBufferLock {
     info: RingBuffer,
 }
 
-struct RingBufferReader<'a> {
+struct RingBufferReadGuard<'a> {
     buffer: &'a mut RingBuffer,
     readonly: &'a mut AtomicBool,
 }
 
-impl<'a> RingBufferReader<'a> {
+impl<'a> RingBufferReadGuard<'a> {
     fn new(buffer: &'a mut RingBuffer, readonly: &'a mut AtomicBool) -> Self {
         readonly.store(true, Ordering::SeqCst);
-        RingBufferReader {
+        RingBufferReadGuard {
             buffer: buffer,
             readonly: readonly,
         }
     }
 }
 
-impl<'a> Deref for RingBufferReader<'a> {
+impl<'a> Deref for RingBufferReadGuard<'a> {
     type Target = RingBuffer;
     fn deref(&self) -> &RingBuffer {
         return self.buffer;
     }
 }
 
-impl<'a> Drop for RingBufferReader<'a> {
+impl<'a> Drop for RingBufferReadGuard<'a> {
     fn drop(&mut self) {
         self.buffer.reset();
         self.readonly.store(false, Ordering::SeqCst);
     }
 }
 
-struct RingBufferWriter<'a> {
+struct RingBufferWriteGuard<'a> {
     buffer: &'a mut RingBuffer,
 }
 
-impl<'a> RingBufferWriter<'a> {
+impl<'a> RingBufferWriteGuard<'a> {
     fn new(buffer: &'a mut RingBuffer) -> Self {
-        RingBufferWriter {
+        RingBufferWriteGuard {
             buffer: buffer,
         }
     }
 }
 
-impl<'a> Deref for RingBufferWriter<'a> {
+impl<'a> Deref for RingBufferWriteGuard<'a> {
     type Target = RingBuffer;
     fn deref(&self) -> &RingBuffer {
         return self.buffer;
     }
 }
 
-impl<'a> DerefMut for RingBufferWriter<'a> {
+impl<'a> DerefMut for RingBufferWriteGuard<'a> {
     fn deref_mut(&mut self) -> &mut RingBuffer {
         return self.buffer;
     }
@@ -240,17 +240,17 @@ impl<'a> RingBufferLock {
         }
     }
 
-    fn access_writer(&'a mut self) -> Option<RingBufferWriter<'a>> {
+    fn access_writer(&'a mut self) -> Option<RingBufferWriteGuard<'a>> {
         let is_readonly = self.readonly.load(Ordering::SeqCst);
         if is_readonly {
             return None;
         } else {
-            return Some(RingBufferWriter::new(&mut self.info));
+            return Some(RingBufferWriteGuard::new(&mut self.info));
         }
     }
 
-    fn access_reader(&'a mut self) -> RingBufferReader<'a> {
-        return RingBufferReader::new(&mut self.info, &mut self.readonly);
+    fn access_reader(&'a mut self) -> RingBufferReadGuard<'a> {
+        return RingBufferReadGuard::new(&mut self.info, &mut self.readonly);
     }
 }
 
@@ -443,6 +443,37 @@ impl BufferWrite for &RingBuffer {
             cpu: &self.cpu,
             cpu: &self.cpu,
         );
+        Ok(())
+    }
+}
+
+impl<T: BufferWrite> BufferWrite for KVec<T> {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        buffer.write(&'[')?;
+        let mut put_comma = true;
+        for &entry in self.iter() {
+            if put_comma {
+                buffer.write(&',')?;
+            }
+            buffer.write(&entry)?;
+            put_comma = true;
+        }
+        buffer.write(&']')?;
+        Ok(())
+    }
+}
+
+impl BufferWrite for RingBuffer {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        define_write!(buffer,
+            entries: &self.entries,
+        );
+        Ok(())
+    }
+}
+
+impl BufferWrite for LoadBalanceInfo {
+    fn write(&self, _buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         Ok(())
     }
 }
