@@ -132,32 +132,19 @@ impl MunchOps for RustMunch {
     }
 
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor {
-        unsafe {
-            if let Some(bufs) = &mut RUST_MUNCH_STATE.bufs {
-                let buf = &mut bufs[cpu_number];
-                let meal_descriptor = buf.access_writer().map(|mut b| b.open_meal_descriptor());
-                if let Some(md) = meal_descriptor {
-                    return md;
-                } else {
-                    return md_invalid();
-                }
+        let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
+        if let Some(bufs) = maybe_bufs {
+            let buf = &mut bufs[cpu_number];
+            let meal_descriptor = buf.access_writer().map(|mut b| b.open_meal_descriptor());
+            if let Some(md) = meal_descriptor {
+                return md;
             }
         }
         return md_invalid();
     }
 
     fn close_meal(md: &bindings::meal_descriptor) {
-        if !md_is_invalid(&*md) {
-            let cpu_number = (*md).cpu_number;
-            let entry_idx = (*md).entry_idx;
-            let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
-            if let Some(bufs) = maybe_bufs {
-                let buf = &mut bufs[cpu_number];
-                buf.access_writer()
-                    .map(|b| b.buffer.get(entry_idx))
-                    .map(|e| e.mark_finished());
-            }
-        }
+        get_current(md).map(|e| e.mark_finished());
     }
 
     fn dump_data(buf: &mut [u8], cpu: usize) -> Result<isize, Error> {
