@@ -91,3 +91,15 @@ void munch_unregister_procfs() {
 	remove_proc_subtree(PROCFS_NAME, NULL);
 	pr_info("/proc/%s directory removed\n", PROCFS_NAME); 
 }
+
+// helpers
+
+size_t nr_sched_domains(size_t cpu) {
+	struct rq *rq = cpu_rq(cpu);
+	struct sched_domain *sd;
+	size_t sd_count = 0;
+	for_each_domain(rq->cpu, sd) {
+		sd_count++;
+	}
+	return sd_count;
+}

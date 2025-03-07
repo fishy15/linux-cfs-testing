@@ -70,18 +70,19 @@ impl kernel::Module for RustMunch {
         let mut ret = Self{table: TABLE};
 
         // SAFETY: meowww
+        unsafe { bindings::set_muncher(&mut ret.table); }
+
+        let cpu_count = unsafe { bindings::nr_cpu_ids as usize };
+        let mut bufs = KVec::<RingBufferLock>
+            ::with_capacity(cpu_count, GFP_KERNEL)
+            .expect("alloc failure");
+        for i in 0..cpu_count {
+            let sd_count = unsafe { bindings::nr_sched_domains(i) };
+            bufs.push(RingBufferLock::new(256, i, sd_count), GFP_KERNEL)
+                .expect("alloc failure (should not happen)");
+        }
+
         unsafe {
-            bindings::set_muncher(&mut ret.table);
-
-            let cpu_count = bindings::nr_cpu_ids as usize;
-            let mut bufs = KVec::<RingBufferLock>
-                ::with_capacity(cpu_count, GFP_KERNEL)
-                .expect("alloc failure");
-            for i in 0..cpu_count {
-                bufs.push(RingBufferLock::new(256, i), GFP_KERNEL)
-                    .expect("alloc failure (should not happen)");
-            }
-
             RUST_MUNCH_STATE.bufs = Some(bufs);
         }
 
@@ -238,10 +239,10 @@ impl<'a> DerefMut for RingBufferWriteGuard<'a> {
 }
 
 impl<'a> RingBufferLock {
-    fn new(n: usize, cpu: usize) -> Self {
+    fn new(n: usize, cpu: usize, sd_count: usize) -> Self {
         RingBufferLock {
             readonly: false.into(),
-            info: RingBuffer::new(n, cpu),
+            info: RingBuffer::new(n, cpu, sd_count),
         }
     }
 
@@ -262,6 +263,7 @@ impl<'a> RingBufferLock {
 struct LoadBalanceInfo {
     finished: AtomicBool, // if we have finished writing all the information
     cpu_number: Option<u64>,
+    per_sd_info: KVec<LBIPerSchedDomain>,
 }
 
 impl LoadBalanceInfo {
@@ -276,25 +278,58 @@ impl LoadBalanceInfo {
         }
     }
 
+    fn new(sd_count: usize) -> Self {
+        let mut entries = KVec::new();
+        entries.reserve(sd_count, GFP_KERNEL).expect("alloc failure for lbi (reserve)");
+        for _ in 0..sd_count {
+            entries.push(LBIPerSchedDomain::new(), GFP_KERNEL)
+                .expect("alloc failure for lbi (push)");
+        }
+
+        LoadBalanceInfo {
+            finished: false.into(),
+            cpu_number: None,
+            per_sd_info: entries,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.finished.store(false, Ordering::SeqCst);
+        self.cpu_number = None;
+        self.per_sd_info.iter_mut().for_each(|e| e.reset());
+    }
+
     fn mark_finished(&mut self) {
         let old_finished = self.finished.swap(true, Ordering::SeqCst);
         if old_finished {
             panic!("trying to finish an already finished entry");
         }
     }
+}
 
-    // marks current entry as actively being written to
-    fn reset(&mut self) {
-        self.finished.store(false, Ordering::SeqCst);
-        self.cpu_number = None;
-    }
+struct LBIPerSchedDomain {
+    finished: AtomicBool,
+}
 
+impl LBIPerSchedDomain {
     fn new() -> Self {
-        LoadBalanceInfo {
+        LBIPerSchedDomain {
             finished: false.into(),
-            cpu_number: None,
         }
     }
+
+    fn reset(&mut self) {
+        self.finished.store(false, Ordering::SeqCst);
+    }
+
+    /*
+    fn mark_finished(&mut self) {
+        let old_finished = self.finished.swap(true, Ordering::SeqCst);
+        if old_finished {
+            panic!("trying to finish an already finished LBIPerSchedDomain");
+        }
+    }
+    */
 }
 
 struct RingBuffer {
@@ -304,11 +339,11 @@ struct RingBuffer {
 }
 
 impl RingBuffer {
-    fn new(n: usize, cpu: usize) -> Self {
+    fn new(n: usize, cpu: usize, sd_count: usize) -> Self {
         let mut buffers = KVec::new();
         buffers.reserve(n, GFP_KERNEL).expect("alloc failure when reserving");
         for _ in 0..n {
-            buffers.push(LoadBalanceInfo::new(), GFP_KERNEL).expect("alloc failure when pushing");
+            buffers.push(LoadBalanceInfo::new(sd_count), GFP_KERNEL).expect("alloc failure when pushing");
         }
 
         return RingBuffer {
@@ -509,11 +544,18 @@ impl BufferWrite for LoadBalanceInfo {
         if self.finished.load(Ordering::SeqCst) {
             define_write!(buffer,
                 cpu: &self.cpu_number,
+                per_sd_info: &self.per_sd_info,
             );
             Ok(())
         } else {
             buffer.write("null")
         }
+    }
+}
+
+impl BufferWrite for LBIPerSchedDomain {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        buffer.write("null")
     }
 }
 
@@ -539,4 +581,3 @@ impl<'a> BufferWriter<'a> {
         val.write(self)
     }
 }
-

@@ -28,4 +28,7 @@ void set_muncher (struct munch_ops *);
 int munch_register_procfs(void);
 void munch_unregister_procfs(void);
 
+// get info from kernel
+size_t nr_sched_domains(size_t cpu);
+
 #endif
