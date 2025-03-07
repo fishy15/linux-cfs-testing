@@ -4,7 +4,13 @@
 struct munch_ops muncher;
 bool is_muncher_valid = false;
 
-void munch64(struct meal_descriptor *md, enum munch_location location, uint64_t x) {
+void munch_flag(struct meal_descriptor *md, enum munch_flag flag) {
+    if (is_muncher_valid) {
+        muncher.munch_flag(md, flag);
+    }
+}
+
+void munch64(struct meal_descriptor *md, enum munch_location_u64 location, uint64_t x) {
     if (is_muncher_valid) {
         muncher.munch64(md, location, x);
     }

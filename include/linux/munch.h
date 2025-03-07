@@ -1,8 +1,12 @@
 #ifndef _LINUX_MUNCH_H
 #define _LINUX_MUNCH_H
 
-// location enum
-enum munch_location {
+// flag enum
+enum munch_flag {
+	MUNCH_GO_TO_NEXT_SD,
+};
+
+enum munch_location_u64 {
 	MUNCH_CPU_NUMBER,
 };
 
@@ -12,13 +16,15 @@ struct meal_descriptor {
 };
 
 struct munch_ops {
-	void (*munch64) (struct meal_descriptor *, enum munch_location, uint64_t);
+	void (*munch_flag) (struct meal_descriptor *, enum munch_flag);
+	void (*munch64) (struct meal_descriptor *, enum munch_location_u64, uint64_t);
 	void (*open_meal) (size_t, struct meal_descriptor *);
 	void (*close_meal) (struct meal_descriptor *);
 	ssize_t (*dump_data) (char *buf, size_t length, size_t cpu);
 };
 
-void munch64(struct meal_descriptor *, enum munch_location, uint64_t);
+void munch_flag(struct meal_descriptor *, enum munch_flag);
+void munch64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
 void open_meal(size_t, struct meal_descriptor *);
 void close_meal(struct meal_descriptor *);
 

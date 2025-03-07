@@ -106,21 +106,29 @@ impl Drop for RustMunch {
     }
 }
 
+// TODO: use int to compare if a meal descriptor is still valid
+fn get_current(md: &bindings::meal_descriptor) -> Option<&mut LoadBalanceInfo> {
+    if !md_is_invalid(&*md) {
+        let cpu_number = (*md).cpu_number;
+        let entry_idx = (*md).entry_idx;
+        let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
+        if let Some(bufs) = maybe_bufs {
+            let buf = &mut bufs[cpu_number];
+            return buf.access_writer()
+                      .map(|b| b.buffer.get(entry_idx));
+        }
+    }
+    return None;
+}
+
 #[vtable]
 impl MunchOps for RustMunch {
-    fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location, x: u64) {
-        // SAFETY: safe
-        if !md_is_invalid(&*md) {
-            let cpu_number = (*md).cpu_number;
-            let entry_idx = (*md).entry_idx;
-            let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
-            if let Some(bufs) = maybe_bufs {
-                let buf = &mut bufs[cpu_number];
-                buf.access_writer()
-                    .map(|b| b.buffer.get(entry_idx))
-                    .map(|e| e.set_value(&location, x));
-            }
-        }
+    fn munch_flag(md: &bindings::meal_descriptor, flag: bindings::munch_flag) {
+        get_current(md).map(|e| e.process_flag(&flag));
+    }
+
+    fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location_u64, x: u64) {
+        get_current(md).map(|e| e.set_value_u64(&location, x));
     }
 
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor {
@@ -264,17 +272,18 @@ struct LoadBalanceInfo {
     finished: AtomicBool, // if we have finished writing all the information
     cpu_number: Option<u64>,
     per_sd_info: KVec<LBIPerSchedDomain>,
+    current_sd: usize,
 }
 
 impl LoadBalanceInfo {
-    fn set_value(&mut self, location: &bindings::munch_location, x: u64) {
+    fn set_value_u64(&mut self, location: &bindings::munch_location_u64, x: u64) {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
             panic!("trying to write when entry has finished");
         }
 
         match location {
-            bindings::munch_location::MUNCH_CPU_NUMBER => self.cpu_number = Some(x),
+            bindings::munch_location_u64::MUNCH_CPU_NUMBER => self.cpu_number = Some(x),
         }
     }
 
@@ -290,6 +299,7 @@ impl LoadBalanceInfo {
             finished: false.into(),
             cpu_number: None,
             per_sd_info: entries,
+            current_sd: 0,
         }
     }
 
@@ -297,12 +307,37 @@ impl LoadBalanceInfo {
         self.finished.store(false, Ordering::SeqCst);
         self.cpu_number = None;
         self.per_sd_info.iter_mut().for_each(|e| e.reset());
+        self.current_sd = 0;
     }
 
     fn mark_finished(&mut self) {
         let old_finished = self.finished.swap(true, Ordering::SeqCst);
         if old_finished {
             panic!("trying to finish an already finished entry");
+        }
+    }
+
+    fn process_flag(&mut self, flag: &bindings::munch_flag) {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        match flag {
+            bindings::munch_flag::MUNCH_GO_TO_NEXT_SD => self.mark_sd_finished(),
+        }
+    }
+
+    fn get_current_sd(&mut self) -> Option<&mut LBIPerSchedDomain> {
+        self.per_sd_info.get_mut(self.current_sd)
+    }
+
+    fn mark_sd_finished(&mut self) {
+        if let Some(sd) = self.get_current_sd() {
+            sd.mark_finished();
+            self.current_sd += 1;
+        } else {
+            panic!("trying to mark sd out of bounds as finished");
         }
     }
 }
@@ -322,14 +357,12 @@ impl LBIPerSchedDomain {
         self.finished.store(false, Ordering::SeqCst);
     }
 
-    /*
     fn mark_finished(&mut self) {
         let old_finished = self.finished.swap(true, Ordering::SeqCst);
         if old_finished {
             panic!("trying to finish an already finished LBIPerSchedDomain");
         }
     }
-    */
 }
 
 struct RingBuffer {

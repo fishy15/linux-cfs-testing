@@ -8,8 +8,10 @@ use kernel::error::Result;
 /// impl to munch
 #[macros::vtable]
 pub trait MunchOps: Sized {
+    /// munch some flag
+    fn munch_flag(md: &bindings::meal_descriptor, flag: bindings::munch_flag);
     /// munch a u64
-    fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location, x: u64);
+    fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location_u64, x: u64);
     /// open a meal
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor;
     /// close a meal
@@ -26,8 +28,14 @@ pub struct MunchOpsVTable<T: MunchOps>(PhantomData<T>);
 impl<T: MunchOps> MunchOpsVTable<T> {
     /// # Safety
     /// priomise!
+    unsafe extern "C" fn munch_flag_c(md: *mut bindings::meal_descriptor, flag: bindings::munch_flag) {
+        unsafe {
+            T::munch_flag(&*md, flag)
+        }
+    }
+
     unsafe extern "C" fn munch64_c(md: *mut bindings::meal_descriptor, 
-            location: bindings::munch_location, x: u64) {
+            location: bindings::munch_location_u64, x: u64) {
         unsafe {
             T::munch64(&*md, location, x)
         }
@@ -56,6 +64,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
     }
     
     const VTABLE: bindings::munch_ops = bindings::munch_ops {
+        munch_flag: Some(Self::munch_flag_c),
         munch64: Some(Self::munch64_c),
         open_meal: Some(Self::open_meal_c),
         close_meal: Some(Self::close_meal_c),
