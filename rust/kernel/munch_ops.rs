@@ -12,6 +12,8 @@ pub trait MunchOps: Sized {
     fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location, x: u64);
     /// open a meal
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor;
+    /// close a meal
+    fn close_meal(md: &bindings::meal_descriptor);
     /// write to procfs
     fn dump_data(buf: &mut [u8], cpu: usize) -> Result<isize>;
 }
@@ -38,6 +40,12 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         }
     }
 
+    unsafe extern "C" fn close_meal_c(md: *mut bindings::meal_descriptor) {
+        unsafe {
+            T::close_meal(&*md);
+        }
+    }
+
     unsafe extern "C" fn dump_data_c(buf: *mut ffi::c_char, length: usize, cpu: usize) -> isize {
         let ptr = buf as *mut u8;
         let mut slice = unsafe { core::slice::from_raw_parts_mut(ptr, length) };
@@ -50,6 +58,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
     const VTABLE: bindings::munch_ops = bindings::munch_ops {
         munch64: Some(Self::munch64_c),
         open_meal: Some(Self::open_meal_c),
+        close_meal: Some(Self::close_meal_c),
         dump_data: Some(Self::dump_data_c),
     };
 

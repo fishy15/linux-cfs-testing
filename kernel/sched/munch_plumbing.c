@@ -21,6 +21,12 @@ void open_meal(size_t cpu_number, struct meal_descriptor *md) {
     }
 }
 
+void close_meal(struct meal_descriptor *md) {
+    if (is_muncher_valid) {
+        return muncher.close_meal(md);
+    }
+}
+
 // procfs
 
 #define PROCFS_NAME "munch" 

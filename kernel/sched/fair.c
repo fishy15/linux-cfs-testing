@@ -11881,6 +11881,7 @@ out_one_pinned:
 	    sd->balance_interval < sd->max_interval)
 		sd->balance_interval *= 2;
 out:
+	close_meal(&md);
 	return ld_moved;
 }
 

@@ -2,12 +2,11 @@
 
 //! munch
 
-use core::clone::Clone;
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::ops::{Deref, DerefMut, Drop};
 use core::option::Option;
-use kernel::{bindings, kvec, munch_ops::*, prelude::*};
+use kernel::{bindings, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
 use kernel::alloc::flags::GFP_KERNEL;
 use kernel::error::{Result, Error};
@@ -44,7 +43,8 @@ impl RustMunchState {
         let buf_reader = &cpu_buf_reader.access_reader();
         let buf: &RingBuffer = &buf_reader;
         buffer.write(&buf)?;
-        buffer.write(&'\n')
+        buffer.write(&'\n')?;
+        buffer.write_byte(0) // null termination
     }
 }
 
@@ -112,13 +112,12 @@ impl MunchOps for RustMunch {
         if !md_is_invalid(&*md) {
             let cpu_number = (*md).cpu_number;
             let entry_idx = (*md).entry_idx;
-            unsafe {
-                if let Some(bufs) = &mut RUST_MUNCH_STATE.bufs {
-                    let buf = &mut bufs[cpu_number];
-                    buf.access_writer()
-                        .map(|b| b.buffer.get(entry_idx))
-                        .map(|e| e.set_value(&location, x));
-                }
+            let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
+            if let Some(bufs) = maybe_bufs {
+                let buf = &mut bufs[cpu_number];
+                buf.access_writer()
+                    .map(|b| b.buffer.get(entry_idx))
+                    .map(|e| e.set_value(&location, x));
             }
         }
     }
@@ -136,6 +135,20 @@ impl MunchOps for RustMunch {
             }
         }
         return md_invalid();
+    }
+
+    fn close_meal(md: &bindings::meal_descriptor) {
+        if !md_is_invalid(&*md) {
+            let cpu_number = (*md).cpu_number;
+            let entry_idx = (*md).entry_idx;
+            let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
+            if let Some(bufs) = maybe_bufs {
+                let buf = &mut bufs[cpu_number];
+                buf.access_writer()
+                    .map(|b| b.buffer.get(entry_idx))
+                    .map(|e| e.mark_finished());
+            }
+        }
     }
 
     fn dump_data(buf: &mut [u8], cpu: usize) -> Result<isize, Error> {
@@ -162,15 +175,7 @@ fn md_is_invalid(md: &bindings::meal_descriptor) -> bool {
     md.cpu_number == usize::MAX || md.entry_idx == usize::MAX
 }
 
-// ring buffer to store information
-
-trait Reset {
-    // Resets the data inside
-    fn reset(&mut self);
-
-    // Constructs a new struct
-    fn new() -> Self;
-}
+/// Ring buffer for writing values
 
 // can only write when the readonly flag is false
 struct RingBufferLock {
@@ -254,26 +259,39 @@ impl<'a> RingBufferLock {
     }
 }
 
-#[derive(Clone)]
 struct LoadBalanceInfo {
+    finished: AtomicBool, // if we have finished writing all the information
     cpu_number: Option<u64>,
 }
 
 impl LoadBalanceInfo {
     fn set_value(&mut self, location: &bindings::munch_location, x: u64) {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
         match location {
             bindings::munch_location::MUNCH_CPU_NUMBER => self.cpu_number = Some(x),
         }
     }
-}
 
-impl Reset for LoadBalanceInfo {
+    fn mark_finished(&mut self) {
+        let old_finished = self.finished.swap(true, Ordering::SeqCst);
+        if old_finished {
+            panic!("trying to finish an already finished entry");
+        }
+    }
+
+    // marks current entry as actively being written to
     fn reset(&mut self) {
+        self.finished.store(false, Ordering::SeqCst);
         self.cpu_number = None;
     }
 
     fn new() -> Self {
         LoadBalanceInfo {
+            finished: false.into(),
             cpu_number: None,
         }
     }
@@ -287,9 +305,15 @@ struct RingBuffer {
 
 impl RingBuffer {
     fn new(n: usize, cpu: usize) -> Self {
+        let mut buffers = KVec::new();
+        buffers.reserve(n, GFP_KERNEL).expect("alloc failure when reserving");
+        for _ in 0..n {
+            buffers.push(LoadBalanceInfo::new(), GFP_KERNEL).expect("alloc failure when pushing");
+        }
+
         return RingBuffer {
             cpu: cpu,
-            entries: kvec![LoadBalanceInfo::new(); n].expect("allocation error"),
+            entries: buffers,
             head: 0.into(),
         };
     }
@@ -462,6 +486,15 @@ impl<T: BufferWrite> BufferWrite for KVec<T> {
     }
 }
 
+impl<T: BufferWrite> BufferWrite for Option<T> {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        match self {
+            Some(val) => buffer.write(val),
+            None => buffer.write("null"),
+        }
+    }
+}
+
 impl BufferWrite for RingBuffer {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         // skip adding a key, this should directly represent the entriess
@@ -472,8 +505,15 @@ impl BufferWrite for RingBuffer {
 
 impl BufferWrite for LoadBalanceInfo {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
-        buffer.write("null")?;
-        Ok(())
+        // only write if we have finished writing to this entry
+        if self.finished.load(Ordering::SeqCst) {
+            define_write!(buffer,
+                cpu: &self.cpu_number,
+            );
+            Ok(())
+        } else {
+            buffer.write("null")
+        }
     }
 }
 
@@ -498,15 +538,5 @@ impl<'a> BufferWriter<'a> {
     fn write<T: BufferWrite + ?Sized>(&mut self, val: &T) -> Result<(), DumpError> {
         val.write(self)
     }
-
-    /*
-    fn write_key<T: BufferWrite + ?Sized>(&mut self, key: &str, val: &T) -> Result<(), DumpError> {
-        self.write("\"")?;
-        self.write(key)?;
-        self.write("\": ")?;
-        self.write(val)?;
-        Ok(())
-    }
-    */
 }
 
