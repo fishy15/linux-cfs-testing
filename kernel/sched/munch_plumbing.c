@@ -5,13 +5,13 @@ struct munch_ops muncher;
 bool is_muncher_valid = false;
 
 void munch_flag(struct meal_descriptor *md, enum munch_flag flag) {
-    if (is_muncher_valid) {
+    if (is_muncher_valid && md != NULL) {
         muncher.munch_flag(md, flag);
     }
 }
 
 void munch64(struct meal_descriptor *md, enum munch_location_u64 location, uint64_t x) {
-    if (is_muncher_valid) {
+    if (is_muncher_valid && md != NULL) {
         muncher.munch64(md, location, x);
     }
 }
@@ -22,13 +22,13 @@ void set_muncher(struct munch_ops *m) {
 }
 
 void open_meal(size_t cpu_number, struct meal_descriptor *md) {
-    if (is_muncher_valid) {
+    if (is_muncher_valid && md != NULL) {
         return muncher.open_meal(cpu_number, md);
     }
 }
 
 void close_meal(struct meal_descriptor *md) {
-    if (is_muncher_valid) {
+    if (is_muncher_valid && md != NULL) {
         return muncher.close_meal(md);
     }
 }

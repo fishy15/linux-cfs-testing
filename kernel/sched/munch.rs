@@ -16,6 +16,13 @@ struct RustMunchState {
 }
 
 #[derive(Debug)]
+enum SetError {
+    SDOutOfBounds(usize),
+    OldMealDescriptor,
+    LockedForReading,
+}
+
+#[derive(Debug)]
 enum DumpError {
     CpuOutOfBounds,
     BufferOutOfBounds,
@@ -35,6 +42,17 @@ impl DumpError {
         }
     }
 }
+
+impl SetError {
+    fn print_error(&self) {
+        match self {
+            SetError::SDOutOfBounds(idx) => panic!("munch error: sd domain index {} out of bounds", idx),
+            SetError::OldMealDescriptor => pr_info!("munch error: ignored because meal descriptor is old"),
+            SetError::LockedForReading => pr_info!("munch error: ignored because locked for reading"),
+        }
+    }
+}
+
 
 impl RustMunchState {
     fn get_data_for_cpu(&mut self, cpu: usize, buffer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
@@ -107,28 +125,31 @@ impl Drop for RustMunch {
 }
 
 // TODO: use int to compare if a meal descriptor is still valid
-fn get_current(md: &bindings::meal_descriptor) -> Option<&mut LoadBalanceInfo> {
+fn get_current(md: &bindings::meal_descriptor) -> Result<&mut LoadBalanceInfo, SetError> {
     if !md_is_invalid(&*md) {
         let cpu_number = (*md).cpu_number;
         let entry_idx = (*md).entry_idx;
         let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
         if let Some(bufs) = maybe_bufs {
             let buf = &mut bufs[cpu_number];
-            return buf.access_writer()
-                      .map(|b| b.buffer.get(entry_idx));
+            return Ok(buf.access_writer()?.buffer.get(entry_idx));
         }
     }
-    return None;
+    return Err(SetError::OldMealDescriptor);
 }
 
 #[vtable]
 impl MunchOps for RustMunch {
     fn munch_flag(md: &bindings::meal_descriptor, flag: bindings::munch_flag) {
-        get_current(md).map(|e| e.process_flag(&flag));
+        if let Err(e) = get_current(md).map(|e| e.process_flag(&flag)) {
+            e.print_error();
+        }
     }
 
     fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location_u64, x: u64) {
-        get_current(md).map(|e| e.set_value_u64(&location, x));
+        if let Err(e) = get_current(md).map(|e| e.set_value_u64(&location, x)) {
+            e.print_error();
+        }
     }
 
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor {
@@ -136,7 +157,7 @@ impl MunchOps for RustMunch {
         if let Some(bufs) = maybe_bufs {
             let buf = &mut bufs[cpu_number];
             let meal_descriptor = buf.access_writer().map(|mut b| b.open_meal_descriptor());
-            if let Some(md) = meal_descriptor {
+            if let Ok(md) = meal_descriptor {
                 return md;
             }
         }
@@ -144,7 +165,9 @@ impl MunchOps for RustMunch {
     }
 
     fn close_meal(md: &bindings::meal_descriptor) {
-        get_current(md).map(|e| e.mark_finished());
+        if let Err(e) = get_current(md).map(|e| e.mark_finished()) {
+            e.print_error();
+        }
     }
 
     fn dump_data(buf: &mut [u8], cpu: usize) -> Result<isize, Error> {
@@ -241,12 +264,12 @@ impl<'a> RingBufferLock {
         }
     }
 
-    fn access_writer(&'a mut self) -> Option<RingBufferWriteGuard<'a>> {
+    fn access_writer(&'a mut self) -> Result<RingBufferWriteGuard<'a>, SetError> {
         let is_readonly = self.readonly.load(Ordering::SeqCst);
         if is_readonly {
-            return None;
+            return Err(SetError::LockedForReading);
         } else {
-            return Some(RingBufferWriteGuard::new(&mut self.info));
+            return Ok(RingBufferWriteGuard::new(&mut self.info));
         }
     }
 
@@ -263,17 +286,6 @@ struct LoadBalanceInfo {
 }
 
 impl LoadBalanceInfo {
-    fn set_value_u64(&mut self, location: &bindings::munch_location_u64, x: u64) {
-        // for debugging, can be removed for performance
-        if self.finished.load(Ordering::SeqCst) {
-            panic!("trying to write when entry has finished");
-        }
-
-        match location {
-            bindings::munch_location_u64::MUNCH_CPU_NUMBER => self.cpu_number = Some(x),
-        }
-    }
-
     fn new(sd_count: usize) -> Self {
         let mut entries = KVec::new();
         entries.reserve(sd_count, GFP_KERNEL).expect("alloc failure for lbi (reserve)");
@@ -304,44 +316,60 @@ impl LoadBalanceInfo {
         }
     }
 
-    fn process_flag(&mut self, flag: &bindings::munch_flag) {
+    fn set_value_u64(&mut self, location: &bindings::munch_location_u64, x: u64) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        match location {
+            bindings::munch_location_u64::MUNCH_CPU_NUMBER
+                => self.get_current_sd()?.cpu = Some(x),
+        };
+        Ok(())
+    }
+
+    fn process_flag(&mut self, flag: &bindings::munch_flag) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
             panic!("trying to write when entry has finished");
         }
 
         match flag {
-            bindings::munch_flag::MUNCH_GO_TO_NEXT_SD => self.mark_sd_finished(),
-        }
+            bindings::munch_flag::MUNCH_GO_TO_NEXT_SD => self.mark_sd_finished()?,
+        };
+        Ok(())
     }
 
-    fn get_current_sd(&mut self) -> Option<&mut LBIPerSchedDomain> {
-        self.per_sd_info.get_mut(self.current_sd)
+    fn get_current_sd(&mut self) -> Result<&mut LBIPerSchedDomain, SetError> {
+        let idx = self.current_sd;
+        self.per_sd_info.get_mut(idx).ok_or(SetError::SDOutOfBounds(idx))
     }
 
-    fn mark_sd_finished(&mut self) {
-        if let Some(sd) = self.get_current_sd() {
-            sd.mark_finished();
-            self.current_sd += 1;
-        } else {
-            panic!("trying to mark sd out of bounds as finished");
-        }
+    fn mark_sd_finished(&mut self) -> Result<(), SetError> {
+        let sd = self.get_current_sd()?;
+        sd.mark_finished();
+        self.current_sd += 1;
+        Ok(())
     }
 }
 
 struct LBIPerSchedDomain {
     finished: AtomicBool,
+    cpu: Option<u64>,
 }
 
 impl LBIPerSchedDomain {
     fn new() -> Self {
         LBIPerSchedDomain {
             finished: false.into(),
+            cpu: None,
         }
     }
 
     fn reset(&mut self) {
         self.finished.store(false, Ordering::SeqCst);
+        self.cpu = None;
     }
 
     fn mark_finished(&mut self) {
@@ -575,7 +603,10 @@ impl BufferWrite for LoadBalanceInfo {
 
 impl BufferWrite for LBIPerSchedDomain {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
-        buffer.write("null")
+        define_write!(buffer,
+            cpu: &self.cpu,
+        );
+        Ok(())
     }
 }
 

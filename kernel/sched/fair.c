@@ -11606,7 +11606,7 @@ static int should_we_balance(struct lb_env *env)
  */
 static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 			struct sched_domain *sd, enum cpu_idle_type idle,
-			int *continue_balancing)
+			int *continue_balancing, struct meal_descriptor *md)
 {
 	int ld_moved, cur_ld_moved, active_balance = 0;
 	struct sched_domain *sd_parent = sd->parent;
@@ -11633,9 +11633,7 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 
 redo:
         karan_swb = should_we_balance(&env);
-	struct meal_descriptor md;
-	open_meal(this_cpu, &md);
-        munch64(&md, MUNCH_CPU_NUMBER, (uint64_t) this_cpu);
+        munch64(md, MUNCH_CPU_NUMBER, (uint64_t) this_cpu);
 	if (!karan_swb) {
 		*continue_balancing = 0;
 		goto out_balanced;
@@ -11881,7 +11879,6 @@ out_one_pinned:
 	    sd->balance_interval < sd->max_interval)
 		sd->balance_interval *= 2;
 out:
-	close_meal(&md);
 	return ld_moved;
 }
 
@@ -12073,6 +12070,9 @@ static void sched_balance_domains(struct rq *rq, enum cpu_idle_type idle)
 	int need_serialize, need_decay = 0;
 	u64 max_cost = 0;
 
+	struct meal_descriptor md;
+	open_meal(cpu, &md);
+
 	rcu_read_lock();
 	for_each_domain(cpu, sd) {
 		/*
@@ -12102,7 +12102,7 @@ static void sched_balance_domains(struct rq *rq, enum cpu_idle_type idle)
 		}
 
 		if (time_after_eq(jiffies, sd->last_balance + interval)) {
-			if (sched_balance_rq(cpu, rq, sd, idle, &continue_balancing)) {
+			if (sched_balance_rq(cpu, rq, sd, idle, &continue_balancing, &md)) {
 				/*
 				 * The LBF_DST_PINNED logic could have changed
 				 * env->dst_cpu, so we can't know our idle
@@ -12121,6 +12121,8 @@ out:
 			next_balance = sd->last_balance + interval;
 			update_next_balance = 1;
 		}
+
+		munch_flag(&md, MUNCH_GO_TO_NEXT_SD);
 	}
 	if (need_decay) {
 		/*
@@ -12140,6 +12142,7 @@ out:
 	if (likely(update_next_balance))
 		rq->next_balance = next_balance;
 
+	close_meal(&md);
 }
 
 static inline int on_null_domain(struct rq *rq)
@@ -12738,7 +12741,7 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 
 			pulled_task = sched_balance_rq(this_cpu, this_rq,
 						   sd, CPU_NEWLY_IDLE,
-						   &continue_balancing);
+						   &continue_balancing, NULL);
 
 			t1 = sched_clock_cpu(this_cpu);
 			domain_cost = t1 - t0;
