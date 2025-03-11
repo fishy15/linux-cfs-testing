@@ -21,6 +21,7 @@ struct munch_ops {
 	void (*open_meal) (size_t, struct meal_descriptor *);
 	void (*close_meal) (struct meal_descriptor *);
 	ssize_t (*dump_data) (char *buf, size_t length, size_t cpu);
+	void (*finalize_dump) (size_t cpu);
 };
 
 void munch_flag(struct meal_descriptor *, enum munch_flag);

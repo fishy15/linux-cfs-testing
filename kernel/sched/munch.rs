@@ -4,7 +4,7 @@
 
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use core::ops::{Deref, DerefMut, Drop};
+use core::ops::{Deref, DerefMut};
 use core::option::Option;
 use kernel::{bindings, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
@@ -53,18 +53,28 @@ impl SetError {
     }
 }
 
-
 impl RustMunchState {
     fn get_data_for_cpu(&mut self, cpu: usize, buffer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
         let bufs = self.bufs.as_mut().unwrap();
         let cpu_buf_reader = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
-        let buf_reader = &cpu_buf_reader.access_reader();
+        let buf_reader = cpu_buf_reader.access_reader();
         let buf: &RingBuffer = &buf_reader;
         buffer.write(&buf)?;
         buffer.write(&'\n')?;
-        buffer.write_byte(0) // null termination
+        buffer.write_byte(0)?; // null termination
+        Ok(())
+    }
+
+    fn finalize_dump(&mut self, cpu: usize) -> Result<(), DumpError> {
+        let bufs = self.bufs.as_mut().unwrap();
+        let cpu_buf_reader = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        let mut buf_reader = cpu_buf_reader.access_reader();
+        buf_reader.reset();
+        Ok(())
     }
 }
+
+const NUM_ENTRIES: usize = 256;
 
 static mut RUST_MUNCH_STATE: RustMunchState = RustMunchState {
     bufs: None,
@@ -96,7 +106,7 @@ impl kernel::Module for RustMunch {
             .expect("alloc failure");
         for i in 0..cpu_count {
             let sd_count = unsafe { bindings::nr_sched_domains(i) };
-            bufs.push(RingBufferLock::new(256, i, sd_count), GFP_KERNEL)
+            bufs.push(RingBufferLock::new(NUM_ENTRIES, i, sd_count), GFP_KERNEL)
                 .expect("alloc failure (should not happen)");
         }
 
@@ -181,6 +191,17 @@ impl MunchOps for RustMunch {
             }
         }
     }
+
+    fn finalize_dump(cpu: usize) -> Result<(), Error> {
+        let result = unsafe { RUST_MUNCH_STATE.finalize_dump(cpu) };
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                e.print_error();
+                return e.to_errno();
+            }
+        }
+    }
 }
 
 fn md_invalid() -> bindings::meal_descriptor {
@@ -215,19 +236,17 @@ impl<'a> RingBufferReadGuard<'a> {
             readonly: readonly,
         }
     }
+
+    fn reset(&mut self) {
+        self.buffer.reset();
+        self.readonly.store(false, Ordering::SeqCst);
+    }
 }
 
 impl<'a> Deref for RingBufferReadGuard<'a> {
     type Target = RingBuffer;
     fn deref(&self) -> &RingBuffer {
         return self.buffer;
-    }
-}
-
-impl<'a> Drop for RingBufferReadGuard<'a> {
-    fn drop(&mut self) {
-        self.buffer.reset();
-        self.readonly.store(false, Ordering::SeqCst);
     }
 }
 
@@ -267,6 +286,7 @@ impl<'a> RingBufferLock {
     fn access_writer(&'a mut self) -> Result<RingBufferWriteGuard<'a>, SetError> {
         let is_readonly = self.readonly.load(Ordering::SeqCst);
         if is_readonly {
+            pr_alert!("munch alert: skipping because locked");
             return Err(SetError::LockedForReading);
         } else {
             return Ok(RingBufferWriteGuard::new(&mut self.info));
@@ -280,7 +300,6 @@ impl<'a> RingBufferLock {
 
 struct LoadBalanceInfo {
     finished: AtomicBool, // if we have finished writing all the information
-    cpu_number: Option<u64>,
     per_sd_info: KVec<LBIPerSchedDomain>,
     current_sd: usize,
 }
@@ -296,7 +315,6 @@ impl LoadBalanceInfo {
 
         LoadBalanceInfo {
             finished: false.into(),
-            cpu_number: None,
             per_sd_info: entries,
             current_sd: 0,
         }
@@ -304,7 +322,6 @@ impl LoadBalanceInfo {
 
     fn reset(&mut self) {
         self.finished.store(false, Ordering::SeqCst);
-        self.cpu_number = None;
         self.per_sd_info.iter_mut().for_each(|e| e.reset());
         self.current_sd = 0;
     }
@@ -388,8 +405,7 @@ struct RingBuffer {
 
 impl RingBuffer {
     fn new(n: usize, cpu: usize, sd_count: usize) -> Self {
-        let mut buffers = KVec::new();
-        buffers.reserve(n, GFP_KERNEL).expect("alloc failure when reserving");
+        let mut buffers = KVec::with_capacity(n, GFP_KERNEL).expect("alloc failure when reserving");
         for _ in 0..n {
             buffers.push(LoadBalanceInfo::new(sd_count), GFP_KERNEL).expect("alloc failure when pushing");
         }
@@ -403,6 +419,7 @@ impl RingBuffer {
 
     fn open_meal_descriptor(&mut self) -> bindings::meal_descriptor {
         let idx = self.head.fetch_add(1, Ordering::SeqCst) % self.entries.len();
+
         self.entries[idx].reset();
         bindings::meal_descriptor {
             cpu_number: self.cpu,
@@ -591,7 +608,6 @@ impl BufferWrite for LoadBalanceInfo {
         // only write if we have finished writing to this entry
         if self.finished.load(Ordering::SeqCst) {
             define_write!(buffer,
-                cpu: &self.cpu_number,
                 per_sd_info: &self.per_sd_info,
             );
             Ok(())
