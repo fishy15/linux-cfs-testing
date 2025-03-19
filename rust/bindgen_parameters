@@ -35,6 +35,7 @@
 # recognized, block generation of the non-helper constants.
 --blocklist-item ARCH_SLAB_MINALIGN
 
-# we added this
+# convert these enums to rust-type enums
 --rustified-enum "munch_flag"
 --rustified-enum "munch_location_u64"
+--rustified-enum "cpu_idle_type"

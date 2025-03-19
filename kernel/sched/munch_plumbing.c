@@ -5,32 +5,38 @@ struct munch_ops muncher;
 bool is_muncher_valid = false;
 
 void munch_flag(struct meal_descriptor *md, enum munch_flag flag) {
-    if (is_muncher_valid && md != NULL) {
-        muncher.munch_flag(md, flag);
-    }
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_flag(md, flag);
+	}
 }
 
 void munch64(struct meal_descriptor *md, enum munch_location_u64 location, uint64_t x) {
-    if (is_muncher_valid && md != NULL) {
-        muncher.munch64(md, location, x);
-    }
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch64(md, location, x);
+	}
+}
+
+void munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle_type x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_cpu_idle_type(md, x);
+	}
 }
 
 void set_muncher(struct munch_ops *m) {
-    memcpy(&muncher, m, sizeof(struct munch_ops));
-    is_muncher_valid = true;
+	memcpy(&muncher, m, sizeof(struct munch_ops));
+	is_muncher_valid = true;
 }
 
 void open_meal(size_t cpu_number, struct meal_descriptor *md) {
-    if (is_muncher_valid && md != NULL) {
-        return muncher.open_meal(cpu_number, md);
-    }
+	if (is_muncher_valid && md != NULL) {
+		return muncher.open_meal(cpu_number, md);
+	}
 }
 
 void close_meal(struct meal_descriptor *md) {
-    if (is_muncher_valid && md != NULL) {
-        return muncher.close_meal(md);
-    }
+	if (is_muncher_valid && md != NULL) {
+		return muncher.close_meal(md);
+	}
 }
 
 // procfs

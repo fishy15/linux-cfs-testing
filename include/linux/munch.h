@@ -1,6 +1,9 @@
 #ifndef _LINUX_MUNCH_H
 #define _LINUX_MUNCH_H
 
+#include "sched/idle.h"
+#include <linux/sched/idle.h>
+
 // flag enum
 enum munch_flag {
 	MUNCH_GO_TO_NEXT_SD,
@@ -18,6 +21,7 @@ struct meal_descriptor {
 struct munch_ops {
 	void (*munch_flag) (struct meal_descriptor *, enum munch_flag);
 	void (*munch64) (struct meal_descriptor *, enum munch_location_u64, uint64_t);
+	void (*munch_cpu_idle_type) (struct meal_descriptor *, enum cpu_idle_type);
 	void (*open_meal) (size_t, struct meal_descriptor *);
 	void (*close_meal) (struct meal_descriptor *);
 	ssize_t (*dump_data) (char *buf, size_t length, size_t cpu);
@@ -26,6 +30,7 @@ struct munch_ops {
 
 void munch_flag(struct meal_descriptor *, enum munch_flag);
 void munch64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
+void munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle_type);
 void open_meal(size_t, struct meal_descriptor *);
 void close_meal(struct meal_descriptor *);
 

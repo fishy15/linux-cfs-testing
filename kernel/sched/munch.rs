@@ -162,6 +162,13 @@ impl MunchOps for RustMunch {
         }
     }
 
+    fn munch_cpu_idle_type(md: &bindings::meal_descriptor, idle_type: bindings::cpu_idle_type) {
+        if let Err(e) = get_current(md).map(|e| e.set_cpu_idle_type(&idle_type)) {
+            e.print_error();
+        }
+    }
+
+
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor {
         let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
         if let Some(bufs) = maybe_bufs {
@@ -358,6 +365,18 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
+    fn set_cpu_idle_type(&mut self, idle_type: &bindings::cpu_idle_type) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let sd = self.get_current_sd()?;
+        sd.cpu_idle_type = Some(idle_type.clone());
+        Ok(())
+    }
+
+
     fn get_current_sd(&mut self) -> Result<&mut LBIPerSchedDomain, SetError> {
         let idx = self.current_sd;
         self.per_sd_info.get_mut(idx).ok_or(SetError::SDOutOfBounds(idx))
@@ -374,6 +393,7 @@ impl LoadBalanceInfo {
 struct LBIPerSchedDomain {
     finished: AtomicBool,
     cpu: Option<u64>,
+    cpu_idle_type: Option<bindings::cpu_idle_type>,
 }
 
 impl LBIPerSchedDomain {
@@ -381,12 +401,14 @@ impl LBIPerSchedDomain {
         LBIPerSchedDomain {
             finished: false.into(),
             cpu: None,
+            cpu_idle_type: None,
         }
     }
 
     fn reset(&mut self) {
         self.finished.store(false, Ordering::SeqCst);
         self.cpu = None;
+        self.cpu_idle_type = None;
     }
 
     fn mark_finished(&mut self) {
@@ -595,6 +617,17 @@ impl<T: BufferWrite> BufferWrite for Option<T> {
     }
 }
 
+impl BufferWrite for bindings::cpu_idle_type {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        match self {
+            bindings::cpu_idle_type::__CPU_NOT_IDLE => buffer.write("CPU_NOT_IDLE"),
+            bindings::cpu_idle_type::CPU_IDLE => buffer.write("CPU_IDLE"),
+            bindings::cpu_idle_type::CPU_NEWLY_IDLE => buffer.write("CPU_NEWLY_IDLE"),
+            bindings::cpu_idle_type::CPU_MAX_IDLE_TYPES => buffer.write("CPU_MAX_IDLE_TYPES"),
+        }
+    }
+}
+
 impl BufferWrite for RingBuffer {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         // skip adding a key, this should directly represent the entriess
@@ -621,6 +654,7 @@ impl BufferWrite for LBIPerSchedDomain {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         define_write!(buffer,
             cpu: &self.cpu,
+            cpu_idle_type: &self.cpu_idle_type,
         );
         Ok(())
     }

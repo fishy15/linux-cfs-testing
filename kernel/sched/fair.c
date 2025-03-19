@@ -11534,11 +11534,13 @@ static int need_active_balance(struct lb_env *env)
 
 static int active_load_balance_cpu_stop(void *data);
 
-static int should_we_balance(struct lb_env *env)
+static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 {
 	struct cpumask *swb_cpus = this_cpu_cpumask_var_ptr(should_we_balance_tmpmask);
 	struct sched_group *sg = env->sd->groups;
 	int cpu, idle_smt = -1;
+
+	// munch_cpumask(md, swb_cpus);
 
 	/*
 	 * Ensure the balancing environment is consistent; can happen
@@ -11554,6 +11556,7 @@ static int should_we_balance(struct lb_env *env)
 	 * However, we bail out if we already have tasks or a wakeup pending,
 	 * to optimize wakeup latency.
 	 */
+	munch_cpu_idle_type(md, env->idle);
 	if (env->idle == CPU_NEWLY_IDLE) {
 		if (env->dst_rq->nr_running > 0 || env->dst_rq->ttwu_pending)
 			return 0;
@@ -11632,7 +11635,7 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 	schedstat_inc(sd->lb_count[idle]);
 
 redo:
-        karan_swb = should_we_balance(&env);
+        karan_swb = should_we_balance(&env, md);
         munch64(md, MUNCH_CPU_NUMBER, (uint64_t) this_cpu);
 	if (!karan_swb) {
 		*continue_balancing = 0;

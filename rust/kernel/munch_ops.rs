@@ -12,6 +12,8 @@ pub trait MunchOps: Sized {
     fn munch_flag(md: &bindings::meal_descriptor, flag: bindings::munch_flag);
     /// munch a u64
     fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location_u64, x: u64);
+    /// munch a cpu_idle_type
+    fn munch_cpu_idle_type(md: &bindings::meal_descriptor, idle_type: bindings::cpu_idle_type);
     /// open a meal
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor;
     /// close a meal
@@ -40,6 +42,12 @@ impl<T: MunchOps> MunchOpsVTable<T> {
             location: bindings::munch_location_u64, x: u64) {
         unsafe {
             T::munch64(&*md, location, x)
+        }
+    }
+
+    unsafe extern "C" fn munch_cpu_idle_type_c(md: *mut bindings::meal_descriptor, idle_type: bindings::cpu_idle_type) {
+        unsafe {
+            T::munch_cpu_idle_type(&*md, idle_type)
         }
     }
 
@@ -72,6 +80,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
     const VTABLE: bindings::munch_ops = bindings::munch_ops {
         munch_flag: Some(Self::munch_flag_c),
         munch64: Some(Self::munch64_c),
+        munch_cpu_idle_type: Some(Self::munch_cpu_idle_type_c),
         open_meal: Some(Self::open_meal_c),
         close_meal: Some(Self::close_meal_c),
         dump_data: Some(Self::dump_data_c),
