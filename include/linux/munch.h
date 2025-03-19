@@ -9,8 +9,14 @@ enum munch_flag {
 	MUNCH_GO_TO_NEXT_SD,
 };
 
+enum munch_location_bool {
+	MUNCH_DST_RQ_TTWU_PENDING,
+};
+
+
 enum munch_location_u64 {
 	MUNCH_CPU_NUMBER,
+	MUNCH_DST_RQ_NR_RUNNING,
 };
 
 struct meal_descriptor {
@@ -20,6 +26,7 @@ struct meal_descriptor {
 
 struct munch_ops {
 	void (*munch_flag) (struct meal_descriptor *, enum munch_flag);
+	void (*munch_bool) (struct meal_descriptor *, enum munch_location_bool, bool);
 	void (*munch64) (struct meal_descriptor *, enum munch_location_u64, uint64_t);
 	void (*munch_cpu_idle_type) (struct meal_descriptor *, enum cpu_idle_type);
 	void (*open_meal) (size_t, struct meal_descriptor *);
@@ -29,8 +36,9 @@ struct munch_ops {
 };
 
 void munch_flag(struct meal_descriptor *, enum munch_flag);
-void munch64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
-void munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle_type);
+bool munch_bool(struct meal_descriptor *, enum munch_location_bool, bool);
+uint64_t munch_u64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
+enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle_type);
 void open_meal(size_t, struct meal_descriptor *);
 void close_meal(struct meal_descriptor *);
 

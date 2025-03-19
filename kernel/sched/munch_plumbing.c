@@ -10,16 +10,26 @@ void munch_flag(struct meal_descriptor *md, enum munch_flag flag) {
 	}
 }
 
-void munch64(struct meal_descriptor *md, enum munch_location_u64 location, uint64_t x) {
+bool munch_bool(struct meal_descriptor *md, enum munch_location_bool location, bool x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_bool(md, location, x);
+	}
+	return x;
+}
+
+
+uint64_t munch_u64(struct meal_descriptor *md, enum munch_location_u64 location, uint64_t x) {
 	if (is_muncher_valid && md != NULL) {
 		muncher.munch64(md, location, x);
 	}
+	return x;
 }
 
-void munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle_type x) {
+enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle_type x) {
 	if (is_muncher_valid && md != NULL) {
 		muncher.munch_cpu_idle_type(md, x);
 	}
+	return x;
 }
 
 void set_muncher(struct munch_ops *m) {

@@ -156,6 +156,12 @@ impl MunchOps for RustMunch {
         }
     }
 
+    fn munch_bool(md: &bindings::meal_descriptor, location: bindings::munch_location_bool, x: bool) {
+        if let Err(e) = get_current(md).map(|e| e.set_value_bool(&location, x)) {
+            e.print_error();
+        }
+    }
+
     fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location_u64, x: u64) {
         if let Err(e) = get_current(md).map(|e| e.set_value_u64(&location, x)) {
             e.print_error();
@@ -340,6 +346,20 @@ impl LoadBalanceInfo {
         }
     }
 
+    fn set_value_bool(&mut self, location: &bindings::munch_location_bool, x: bool) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        match location {
+            bindings::munch_location_bool::MUNCH_DST_RQ_TTWU_PENDING
+                => self.get_current_sd()?.dst_rq_ttwu_pending = Some(x),
+        };
+        Ok(())
+    }
+
+
     fn set_value_u64(&mut self, location: &bindings::munch_location_u64, x: u64) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
@@ -349,6 +369,8 @@ impl LoadBalanceInfo {
         match location {
             bindings::munch_location_u64::MUNCH_CPU_NUMBER
                 => self.get_current_sd()?.cpu = Some(x),
+            bindings::munch_location_u64::MUNCH_DST_RQ_NR_RUNNING
+                => self.get_current_sd()?.dst_rq_nr_running = Some(x),
         };
         Ok(())
     }
@@ -394,6 +416,8 @@ struct LBIPerSchedDomain {
     finished: AtomicBool,
     cpu: Option<u64>,
     cpu_idle_type: Option<bindings::cpu_idle_type>,
+    dst_rq_nr_running: Option<u64>,
+    dst_rq_ttwu_pending: Option<bool>,
 }
 
 impl LBIPerSchedDomain {
@@ -402,6 +426,8 @@ impl LBIPerSchedDomain {
             finished: false.into(),
             cpu: None,
             cpu_idle_type: None,
+            dst_rq_nr_running: None,
+            dst_rq_ttwu_pending: None,
         }
     }
 
@@ -409,6 +435,8 @@ impl LBIPerSchedDomain {
         self.finished.store(false, Ordering::SeqCst);
         self.cpu = None;
         self.cpu_idle_type = None;
+        self.dst_rq_nr_running = None;
+        self.dst_rq_ttwu_pending = None;
     }
 
     fn mark_finished(&mut self) {
@@ -582,6 +610,17 @@ impl BufferWrite for str {
     }
 }
 
+impl BufferWrite for bool {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        if *self {
+            buffer.write("true")
+        } else {
+            buffer.write("false")
+        }
+    }
+
+}
+
 impl BufferWrite for &RingBuffer {
     fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
         define_write!(buffer,
@@ -655,6 +694,8 @@ impl BufferWrite for LBIPerSchedDomain {
         define_write!(buffer,
             cpu: &self.cpu,
             cpu_idle_type: &self.cpu_idle_type,
+            dst_rq_nr_running: &self.dst_rq_nr_running,
+            dst_rq_ttwu_pending: &self.dst_rq_ttwu_pending,
         );
         Ok(())
     }
