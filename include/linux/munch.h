@@ -26,6 +26,7 @@ enum munch_location_bool_cpu {
 };
 
 struct meal_descriptor {
+	size_t age;
 	size_t cpu_number;
 	size_t entry_idx;
 };

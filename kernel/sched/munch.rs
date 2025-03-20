@@ -141,10 +141,16 @@ fn get_current(md: &bindings::meal_descriptor) -> Result<&mut LoadBalanceInfo, S
     if !md_is_invalid(&*md) {
         let cpu_number = (*md).cpu_number;
         let entry_idx = (*md).entry_idx;
+        let age = (*md).age;
         let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
         if let Some(bufs) = maybe_bufs {
             let buf = &mut bufs[cpu_number];
-            return Ok(buf.access_writer()?.buffer.get(entry_idx));
+            let buf_writer = buf.access_writer()?;
+            if buf_writer.age.load(Ordering::SeqCst) == age {
+                return Ok(buf_writer.buffer.get(entry_idx));
+            } else {
+                return Err(SetError::OldMealDescriptor);
+            }
         }
     }
     return Err(SetError::OldMealDescriptor);
@@ -226,6 +232,7 @@ impl MunchOps for RustMunch {
 
 fn md_invalid() -> bindings::meal_descriptor {
     bindings::meal_descriptor {
+        age: 0,
         cpu_number: usize::MAX,
         entry_idx: usize::MAX,
     }
@@ -306,7 +313,6 @@ impl<'a> RingBufferLock {
     fn access_writer(&'a mut self) -> Result<RingBufferWriteGuard<'a>, SetError> {
         let is_readonly = self.readonly.load(Ordering::SeqCst);
         if is_readonly {
-            pr_alert!("munch alert: skipping because locked");
             return Err(SetError::LockedForReading);
         } else {
             return Ok(RingBufferWriteGuard::new(&mut self.info));
@@ -504,6 +510,7 @@ impl LBIPerCpu {
 }
 
 struct RingBuffer {
+    age: AtomicUsize,
     cpu: usize,
     entries: KVec<LoadBalanceInfo>,
     head: AtomicUsize,
@@ -517,6 +524,7 @@ impl RingBuffer {
         }
 
         return RingBuffer {
+            age: 0.into(),
             cpu: cpu,
             entries: buffers,
             head: 0.into(),
@@ -525,9 +533,11 @@ impl RingBuffer {
 
     fn open_meal_descriptor(&mut self) -> bindings::meal_descriptor {
         let idx = self.head.fetch_add(1, Ordering::SeqCst) % self.entries.len();
+        let age = self.age.load(Ordering::SeqCst);
 
         self.entries[idx].reset();
         bindings::meal_descriptor {
+            age: age,
             cpu_number: self.cpu,
             entry_idx: idx,
         }
@@ -540,6 +550,7 @@ impl RingBuffer {
     fn reset(&mut self) {
         self.entries.iter_mut().for_each(|e| e.reset());
         self.head.store(0, Ordering::SeqCst);
+        self.age.fetch_add(1, Ordering::SeqCst);
     }
 }
 
