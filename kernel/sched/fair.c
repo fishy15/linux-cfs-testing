@@ -11540,7 +11540,7 @@ static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 	struct sched_group *sg = env->sd->groups;
 	int cpu, idle_smt = -1;
 
-	// munch_cpumask(md, swb_cpus);
+	// TODO: munch_cpumask(md, swb_cpus);
 
 	/*
 	 * Ensure the balancing environment is consistent; can happen
@@ -11566,8 +11566,11 @@ static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 	}
 
 	cpumask_copy(swb_cpus, group_balance_mask(sg));
+	// munch_cpumask(swb_cpus)
+
 	/* Try to find first idle CPU */
 	for_each_cpu_and(cpu, swb_cpus, env->cpus) {
+		munch_bool_cpu(md, MUNCH_IDLE_CPU, cpu, idle_cpu(cpu));
 		if (!idle_cpu(cpu))
 			continue;
 
@@ -11576,6 +11579,8 @@ static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 		 * balancing cores, but remember the first idle SMT CPU for
 		 * later consideration.  Find CPU on an idle core first.
 		 */
+		// TODO: process flags
+		munch_bool_cpu(md, MUNCH_IS_CORE_IDLE, cpu, is_core_idle(cpu));
 		if (!(env->sd->flags & SD_SHARE_CPUCAPACITY) && !is_core_idle(cpu)) {
 			if (idle_smt == -1)
 				idle_smt = cpu;
@@ -11602,6 +11607,7 @@ static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 		return idle_smt == env->dst_cpu;
 
 	/* Are we the first CPU of this group ? */
+	munch_u64(md, MUNCH_GROUP_BALANCE_CPU_SG, group_balance_cpu(sg));
 	return group_balance_cpu(sg) == env->dst_cpu;
 }
 

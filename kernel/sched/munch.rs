@@ -18,6 +18,7 @@ struct RustMunchState {
 #[derive(Debug)]
 enum SetError {
     SDOutOfBounds(usize),
+    CPUOutOfBounds(usize),
     OldMealDescriptor,
     LockedForReading,
 }
@@ -46,7 +47,8 @@ impl DumpError {
 impl SetError {
     fn print_error(&self) {
         match self {
-            SetError::SDOutOfBounds(idx) => panic!("munch error: sd domain index {} out of bounds", idx),
+            SetError::SDOutOfBounds(idx) => panic!("munch error: sched domain index {} out of bounds", idx),
+            SetError::CPUOutOfBounds(idx) => panic!("munch error: cpu index {} out of bounds", idx),
             SetError::OldMealDescriptor => pr_info!("munch error: ignored because meal descriptor is old"),
             SetError::LockedForReading => pr_info!("munch error: ignored because locked for reading"),
         }
@@ -106,7 +108,7 @@ impl kernel::Module for RustMunch {
             .expect("alloc failure");
         for i in 0..cpu_count {
             let sd_count = unsafe { bindings::nr_sched_domains(i) };
-            bufs.push(RingBufferLock::new(NUM_ENTRIES, i, sd_count), GFP_KERNEL)
+            bufs.push(RingBufferLock::new(NUM_ENTRIES, i, sd_count, cpu_count), GFP_KERNEL)
                 .expect("alloc failure (should not happen)");
         }
 
@@ -174,6 +176,11 @@ impl MunchOps for RustMunch {
         }
     }
 
+    fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool) {
+        if let Err(e) = get_current(md).map(|e| e.set_value_bool_cpu(&location, cpu, x)) {
+            e.print_error();
+        }
+    }
 
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor {
         let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
@@ -289,10 +296,10 @@ impl<'a> DerefMut for RingBufferWriteGuard<'a> {
 }
 
 impl<'a> RingBufferLock {
-    fn new(n: usize, cpu: usize, sd_count: usize) -> Self {
+    fn new(n: usize, cpu: usize, sd_count: usize, cpu_count: usize) -> Self {
         RingBufferLock {
             readonly: false.into(),
-            info: RingBuffer::new(n, cpu, sd_count),
+            info: RingBuffer::new(n, cpu, sd_count, cpu_count),
         }
     }
 
@@ -314,21 +321,28 @@ impl<'a> RingBufferLock {
 struct LoadBalanceInfo {
     finished: AtomicBool, // if we have finished writing all the information
     per_sd_info: KVec<LBIPerSchedDomain>,
+    per_cpu_info: KVec<LBIPerCpu>,
     current_sd: usize,
 }
 
 impl LoadBalanceInfo {
-    fn new(sd_count: usize) -> Self {
-        let mut entries = KVec::new();
-        entries.reserve(sd_count, GFP_KERNEL).expect("alloc failure for lbi (reserve)");
+    fn new(sd_count: usize, cpu_count: usize) -> Self {
+        let mut sd_entries = KVec::with_capacity(sd_count, GFP_KERNEL).expect("alloc failure for lbi sd (reserve)");
         for _ in 0..sd_count {
-            entries.push(LBIPerSchedDomain::new(), GFP_KERNEL)
-                .expect("alloc failure for lbi (push)");
+            sd_entries.push(LBIPerSchedDomain::new(), GFP_KERNEL)
+                .expect("alloc failure for lbi sd (push)");
+        }
+
+        let mut cpu_entries = KVec::with_capacity(cpu_count, GFP_KERNEL).expect("alloc failure for lbi cpus (reserve)");
+        for _ in 0..cpu_count {
+            cpu_entries.push(LBIPerCpu::new(), GFP_KERNEL)
+                .expect("alloc failure for lbi cpu (push)");
         }
 
         LoadBalanceInfo {
             finished: false.into(),
-            per_sd_info: entries,
+            per_sd_info: sd_entries,
+            per_cpu_info: cpu_entries,
             current_sd: 0,
         }
     }
@@ -336,6 +350,7 @@ impl LoadBalanceInfo {
     fn reset(&mut self) {
         self.finished.store(false, Ordering::SeqCst);
         self.per_sd_info.iter_mut().for_each(|e| e.reset());
+        self.per_cpu_info.iter_mut().for_each(|e| e.reset());
         self.current_sd = 0;
     }
 
@@ -359,7 +374,6 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
-
     fn set_value_u64(&mut self, location: &bindings::munch_location_u64, x: u64) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
@@ -371,6 +385,8 @@ impl LoadBalanceInfo {
                 => self.get_current_sd()?.cpu = Some(x),
             bindings::munch_location_u64::MUNCH_DST_RQ_NR_RUNNING
                 => self.get_current_sd()?.dst_rq_nr_running = Some(x),
+            bindings::munch_location_u64::MUNCH_GROUP_BALANCE_CPU_SG
+                => self.get_current_sd()?.group_balance_cpu_sg = Some(x),
         };
         Ok(())
     }
@@ -398,10 +414,28 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
+    fn set_value_bool_cpu(&mut self, location: &bindings::munch_location_bool_cpu, cpu: usize, x: bool) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        match location {
+            bindings::munch_location_bool_cpu::MUNCH_IDLE_CPU
+                => self.get_cpu(cpu)?.idle_cpu = Some(x),
+            bindings::munch_location_bool_cpu::MUNCH_IS_CORE_IDLE
+                => self.get_cpu(cpu)?.is_core_idle = Some(x),
+        };
+        Ok(())
+    }
 
     fn get_current_sd(&mut self) -> Result<&mut LBIPerSchedDomain, SetError> {
         let idx = self.current_sd;
         self.per_sd_info.get_mut(idx).ok_or(SetError::SDOutOfBounds(idx))
+    }
+
+    fn get_cpu(&mut self, cpu: usize) -> Result<&mut LBIPerCpu, SetError> {
+        self.per_cpu_info.get_mut(cpu).ok_or(SetError::CPUOutOfBounds(cpu))
     }
 
     fn mark_sd_finished(&mut self) -> Result<(), SetError> {
@@ -418,6 +452,7 @@ struct LBIPerSchedDomain {
     cpu_idle_type: Option<bindings::cpu_idle_type>,
     dst_rq_nr_running: Option<u64>,
     dst_rq_ttwu_pending: Option<bool>,
+    group_balance_cpu_sg: Option<u64>,
 }
 
 impl LBIPerSchedDomain {
@@ -428,6 +463,7 @@ impl LBIPerSchedDomain {
             cpu_idle_type: None,
             dst_rq_nr_running: None,
             dst_rq_ttwu_pending: None,
+            group_balance_cpu_sg: None,
         }
     }
 
@@ -437,6 +473,7 @@ impl LBIPerSchedDomain {
         self.cpu_idle_type = None;
         self.dst_rq_nr_running = None;
         self.dst_rq_ttwu_pending = None;
+        self.group_balance_cpu_sg = None;
     }
 
     fn mark_finished(&mut self) {
@@ -447,6 +484,25 @@ impl LBIPerSchedDomain {
     }
 }
 
+struct LBIPerCpu {
+    idle_cpu: Option<bool>,
+    is_core_idle: Option<bool>,
+}
+
+impl LBIPerCpu {
+    fn new() -> Self {
+        LBIPerCpu {
+            idle_cpu: None,
+            is_core_idle: None,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.idle_cpu = None;
+        self.is_core_idle = None;
+    }
+}
+
 struct RingBuffer {
     cpu: usize,
     entries: KVec<LoadBalanceInfo>,
@@ -454,10 +510,10 @@ struct RingBuffer {
 }
 
 impl RingBuffer {
-    fn new(n: usize, cpu: usize, sd_count: usize) -> Self {
+    fn new(n: usize, cpu: usize, sd_count: usize, cpu_count: usize) -> Self {
         let mut buffers = KVec::with_capacity(n, GFP_KERNEL).expect("alloc failure when reserving");
         for _ in 0..n {
-            buffers.push(LoadBalanceInfo::new(sd_count), GFP_KERNEL).expect("alloc failure when pushing");
+            buffers.push(LoadBalanceInfo::new(sd_count, cpu_count), GFP_KERNEL).expect("alloc failure when pushing");
         }
 
         return RingBuffer {
@@ -618,7 +674,6 @@ impl BufferWrite for bool {
             buffer.write("false")
         }
     }
-
 }
 
 impl BufferWrite for &RingBuffer {
@@ -681,6 +736,7 @@ impl BufferWrite for LoadBalanceInfo {
         if self.finished.load(Ordering::SeqCst) {
             define_write!(buffer,
                 per_sd_info: &self.per_sd_info,
+                per_cpu_info: &self.per_cpu_info,
             );
             Ok(())
         } else {
@@ -696,6 +752,17 @@ impl BufferWrite for LBIPerSchedDomain {
             cpu_idle_type: &self.cpu_idle_type,
             dst_rq_nr_running: &self.dst_rq_nr_running,
             dst_rq_ttwu_pending: &self.dst_rq_ttwu_pending,
+            group_balance_cpu_sg: &self.group_balance_cpu_sg,
+        );
+        Ok(())
+    }
+}
+
+impl BufferWrite for LBIPerCpu {
+    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+        define_write!(buffer,
+            idle_cpu: &self.idle_cpu, 
+            is_core_idle: &self.is_core_idle,
         );
         Ok(())
     }

@@ -32,6 +32,13 @@ enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle
 	return x;
 }
 
+bool munch_bool_cpu(struct meal_descriptor *md, enum munch_location_bool_cpu location, size_t cpu, bool x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_bool_cpu(md, location, cpu, x);
+	}
+	return x;
+}
+
 void set_muncher(struct munch_ops *m) {
 	memcpy(&muncher, m, sizeof(struct munch_ops));
 	is_muncher_valid = true;
