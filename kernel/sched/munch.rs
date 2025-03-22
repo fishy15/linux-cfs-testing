@@ -59,14 +59,14 @@ impl SetError {
 }
 
 impl RustMunchState {
-    fn get_data_for_cpu(&mut self, cpu: usize, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+    fn get_data_for_cpu(&mut self, cpu: usize, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         let bufs = self.bufs.as_mut().unwrap();
         let cpu_buf_reader = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
         let buf_reader = cpu_buf_reader.access_reader();
         let buf: &RingBuffer = &buf_reader;
-        buffer.write(&buf)?;
-        buffer.write(&'\n')?;
-        buffer.write_byte(0)?; // null termination
+        seq_file.write(&buf)?;
+        seq_file.write(&'\n')?;
+        seq_file.write_byte(0)?; // null termination
         Ok(())
     }
 
@@ -210,7 +210,7 @@ impl MunchOps for RustMunch {
     }
 
     fn dump_data(seq_file: *mut bindings::seq_file, cpu: usize) -> Result<isize, Error> {
-        let mut writer = BufferWriter::new(seq_file);
+        let mut writer = SeqFileWriter::new(seq_file);
         let result = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu, &mut writer) };
         match result {
             Ok(_) => Ok(writer.bytes_written.try_into().unwrap()),
@@ -280,26 +280,26 @@ impl<'a> Deref for RingBufferReadGuard<'a> {
     }
 }
 
-struct RingBufferWriteGuard<'a> {
+struct RingSeqFileWriteGuard<'a> {
     buffer: &'a mut RingBuffer,
 }
 
-impl<'a> RingBufferWriteGuard<'a> {
+impl<'a> RingSeqFileWriteGuard<'a> {
     fn new(buffer: &'a mut RingBuffer) -> Self {
-        RingBufferWriteGuard {
+        RingSeqFileWriteGuard {
             buffer: buffer,
         }
     }
 }
 
-impl<'a> Deref for RingBufferWriteGuard<'a> {
+impl<'a> Deref for RingSeqFileWriteGuard<'a> {
     type Target = RingBuffer;
     fn deref(&self) -> &RingBuffer {
         return self.buffer;
     }
 }
 
-impl<'a> DerefMut for RingBufferWriteGuard<'a> {
+impl<'a> DerefMut for RingSeqFileWriteGuard<'a> {
     fn deref_mut(&mut self) -> &mut RingBuffer {
         return self.buffer;
     }
@@ -313,12 +313,12 @@ impl<'a> RingBufferLock {
         }
     }
 
-    fn access_writer(&'a mut self) -> Result<RingBufferWriteGuard<'a>, SetError> {
+    fn access_writer(&'a mut self) -> Result<RingSeqFileWriteGuard<'a>, SetError> {
         let is_readonly = self.readonly.load(Ordering::SeqCst);
         if is_readonly {
             return Err(SetError::LockedForReading);
         } else {
-            return Ok(RingBufferWriteGuard::new(&mut self.info));
+            return Ok(RingSeqFileWriteGuard::new(&mut self.info));
         }
     }
 
@@ -560,43 +560,43 @@ impl RingBuffer {
 // Writer Buffer
 // Contains a reference to some other buffer and an index
 // Various methods that try to write
-struct BufferWriter {
+struct SeqFileWriter {
     seq_file: *mut bindings::seq_file,
     bytes_written: usize,
 }
 
-trait BufferWrite {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError>;
+trait SeqFileWrite {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError>;
 }
 
 macro_rules! write_body {
-    ($buffer:ident, $k:ident: $v:expr) => {
-        $buffer.write(&'"')?;
-        $buffer.write(stringify!($k))?;
-        $buffer.write(&'"')?;
-        $buffer.write(":")?;
-        $buffer.write($v)?;
+    ($seq_file:ident, $k:ident: $v:expr) => {
+        $seq_file.write(&'"')?;
+        $seq_file.write(stringify!($k))?;
+        $seq_file.write(&'"')?;
+        $seq_file.write(":")?;
+        $seq_file.write($v)?;
     };
-    ($buffer:ident, $k:ident: $v:expr, $($ks:ident: $vs:expr),+) => {
-        write_body!($buffer, $k: $v);
-        $buffer.write(",")?;
-        write_body!($buffer, $($ks: $vs),+);
+    ($seq_file:ident, $k:ident: $v:expr, $($ks:ident: $vs:expr),+) => {
+        write_body!($seq_file, $k: $v);
+        $seq_file.write(",")?;
+        write_body!($seq_file, $($ks: $vs),+);
     };
 }
 
 macro_rules! define_write {
-    ($buffer:ident, $($key:ident: $value:expr),+ $(,)?) => {
-        $buffer.write(&'{')?; 
-        write_body!($buffer, $($key: $value),+);
-        $buffer.write(&'}')?;
+    ($seq_file:ident, $($key:ident: $value:expr),+ $(,)?) => {
+        $seq_file.write(&'{')?; 
+        write_body!($seq_file, $($key: $value),+);
+        $seq_file.write(&'}')?;
     };
 }
 
-impl BufferWrite for u64 {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+impl SeqFileWrite for u64 {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         let val = *self;
         if val == 0 {
-            buffer.write_byte('0' as u8)
+            seq_file.write_byte('0' as u8)
         } else {
             let mut cur_val = val;
             let mut number_buffer = [0 as u8; 20]; // max number of decimal digits in a u64
@@ -609,32 +609,32 @@ impl BufferWrite for u64 {
             }
             
             let filled_slice = &number_buffer[0..idx]; 
-            filled_slice.iter().rev().try_for_each(|dig| buffer.write_byte('0' as u8 + *dig))
+            filled_slice.iter().rev().try_for_each(|dig| seq_file.write_byte('0' as u8 + *dig))
         }
     }
 }
 
-impl BufferWrite for u8 {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+impl SeqFileWrite for u8 {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> { (*self as u64).write(seq_file) }
 }
-impl BufferWrite for u16 {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+impl SeqFileWrite for u16 {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> { (*self as u64).write(seq_file) }
 }
-impl BufferWrite for u32 {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+impl SeqFileWrite for u32 {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> { (*self as u64).write(seq_file) }
 }
-impl BufferWrite for usize {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+impl SeqFileWrite for usize {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> { (*self as u64).write(seq_file) }
 }
 
-impl BufferWrite for i64 {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+impl SeqFileWrite for i64 {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         let val = *self;
         if val == 0 {
-            buffer.write_byte('0' as u8)
+            seq_file.write_byte('0' as u8)
         } else {
             if val < 0 {
-                buffer.write_byte('-' as u8)?;
+                seq_file.write_byte('-' as u8)?;
             }
 
             let mut cur_val = val;
@@ -648,51 +648,51 @@ impl BufferWrite for i64 {
             }
 
             let filled_slice = &number_buffer[0..idx]; 
-            filled_slice.iter().rev().try_for_each(|dig| buffer.write_byte('0' as u8 + *dig))
+            filled_slice.iter().rev().try_for_each(|dig| seq_file.write_byte('0' as u8 + *dig))
         }
     }
 }
 
-impl BufferWrite for i8 {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+impl SeqFileWrite for i8 {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> { (*self as i64).write(seq_file) }
 }
-impl BufferWrite for i16 {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+impl SeqFileWrite for i16 {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> { (*self as i64).write(seq_file) }
 }
-impl BufferWrite for i32 {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+impl SeqFileWrite for i32 {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> { (*self as i64).write(seq_file) }
 }
-impl BufferWrite for isize {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+impl SeqFileWrite for isize {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> { (*self as i64).write(seq_file) }
 }
 
-impl BufferWrite for char {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+impl SeqFileWrite for char {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         let c = *self;
         let as_byte: u8 = c.try_into().or_else(|_| Err(DumpError::NotSingleByteChar(c)))?;
-        buffer.write_byte(as_byte)
+        seq_file.write_byte(as_byte)
     }
 }
 
-impl BufferWrite for str {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
-        self.chars().try_for_each(|c| buffer.write(&c))
+impl SeqFileWrite for str {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        self.chars().try_for_each(|c| seq_file.write(&c))
     }
 }
 
-impl BufferWrite for bool {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+impl SeqFileWrite for bool {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         if *self {
-            buffer.write("true")
+            seq_file.write("true")
         } else {
-            buffer.write("false")
+            seq_file.write("false")
         }
     }
 }
 
-impl BufferWrite for &RingBuffer {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
-        define_write!(buffer,
+impl SeqFileWrite for &RingBuffer {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        define_write!(seq_file,
             cpu: &self.cpu,
             entries: &self.entries,
         );
@@ -700,68 +700,68 @@ impl BufferWrite for &RingBuffer {
     }
 }
 
-impl<T: BufferWrite> BufferWrite for KVec<T> {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
-        buffer.write(&'[')?;
+impl<T: SeqFileWrite> SeqFileWrite for KVec<T> {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        seq_file.write(&'[')?;
         let mut put_comma = false;
         for entry in self.iter() {
             if put_comma {
-                buffer.write(&',')?;
+                seq_file.write(&',')?;
             }
-            buffer.write(entry)?;
+            seq_file.write(entry)?;
             put_comma = true;
         }
-        buffer.write(&']')?;
+        seq_file.write(&']')?;
         Ok(())
     }
 }
 
-impl<T: BufferWrite> BufferWrite for Option<T> {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+impl<T: SeqFileWrite> SeqFileWrite for Option<T> {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         match self {
-            Some(val) => buffer.write(val),
-            None => buffer.write("null"),
+            Some(val) => seq_file.write(val),
+            None => seq_file.write("null"),
         }
     }
 }
 
-impl BufferWrite for bindings::cpu_idle_type {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+impl SeqFileWrite for bindings::cpu_idle_type {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         match self {
-            bindings::cpu_idle_type::__CPU_NOT_IDLE => buffer.write("CPU_NOT_IDLE"),
-            bindings::cpu_idle_type::CPU_IDLE => buffer.write("CPU_IDLE"),
-            bindings::cpu_idle_type::CPU_NEWLY_IDLE => buffer.write("CPU_NEWLY_IDLE"),
-            bindings::cpu_idle_type::CPU_MAX_IDLE_TYPES => buffer.write("CPU_MAX_IDLE_TYPES"),
+            bindings::cpu_idle_type::__CPU_NOT_IDLE => seq_file.write("CPU_NOT_IDLE"),
+            bindings::cpu_idle_type::CPU_IDLE => seq_file.write("CPU_IDLE"),
+            bindings::cpu_idle_type::CPU_NEWLY_IDLE => seq_file.write("CPU_NEWLY_IDLE"),
+            bindings::cpu_idle_type::CPU_MAX_IDLE_TYPES => seq_file.write("CPU_MAX_IDLE_TYPES"),
         }
     }
 }
 
-impl BufferWrite for RingBuffer {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+impl SeqFileWrite for RingBuffer {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         // skip adding a key, this should directly represent the entriess
-        buffer.write(&self.entries)?;
+        seq_file.write(&self.entries)?;
         Ok(())
     }
 }
 
-impl BufferWrite for LoadBalanceInfo {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
+impl SeqFileWrite for LoadBalanceInfo {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         // only write if we have finished writing to this entry
         if self.finished.load(Ordering::SeqCst) {
-            define_write!(buffer,
+            define_write!(seq_file,
                 per_sd_info: &self.per_sd_info,
                 per_cpu_info: &self.per_cpu_info,
             );
             Ok(())
         } else {
-            buffer.write("null")
+            seq_file.write("null")
         }
     }
 }
 
-impl BufferWrite for LBIPerSchedDomain {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
-        define_write!(buffer,
+impl SeqFileWrite for LBIPerSchedDomain {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        define_write!(seq_file,
             cpu: &self.cpu,
             cpu_idle_type: &self.cpu_idle_type,
             dst_rq_nr_running: &self.dst_rq_nr_running,
@@ -772,9 +772,9 @@ impl BufferWrite for LBIPerSchedDomain {
     }
 }
 
-impl BufferWrite for LBIPerCpu {
-    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
-        define_write!(buffer,
+impl SeqFileWrite for LBIPerCpu {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        define_write!(seq_file,
             idle_cpu: &self.idle_cpu, 
             is_core_idle: &self.is_core_idle,
         );
@@ -782,9 +782,9 @@ impl BufferWrite for LBIPerCpu {
     }
 }
 
-impl BufferWriter {
+impl SeqFileWriter {
     fn new(seq_file: *mut bindings::seq_file) -> Self {
-        BufferWriter {
+        SeqFileWriter {
             seq_file: seq_file,
             bytes_written: 0
         }
@@ -801,7 +801,7 @@ impl BufferWriter {
         }
     }
 
-    fn write<T: BufferWrite + ?Sized>(&mut self, val: &T) -> Result<(), DumpError> {
+    fn write<T: SeqFileWrite + ?Sized>(&mut self, val: &T) -> Result<(), DumpError> {
         val.write(self)
     }
 }
