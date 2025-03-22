@@ -4,6 +4,8 @@
 struct munch_ops muncher;
 bool is_muncher_valid = false;
 
+const size_t MUNCH_NUM_ENTRIES = 256;
+
 void munch_flag(struct meal_descriptor *md, enum munch_flag flag) {
 	if (is_muncher_valid && md != NULL) {
 		muncher.munch_flag(md, flag);
@@ -67,6 +69,7 @@ static int show_munch(struct seq_file *m) {
 
 	if (is_muncher_valid) {
 		pr_alert("starting dump!");
+		muncher.start_dump(cpu);
 		unsigned long res = muncher.dump_data(m, cpu);
 		pr_alert("output of dump: %ld\n", res);
 		if (!seq_has_overflowed(m)) {

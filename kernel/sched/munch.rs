@@ -4,7 +4,6 @@
 
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use core::ops::{Deref, DerefMut};
 use core::option::Option;
 use kernel::{bindings, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
@@ -28,6 +27,8 @@ enum DumpError {
     CpuOutOfBounds,
     BufferOutOfBounds,
     NotSingleByteChar(char),
+    NotReadOnly,
+    RingBufferUninitialized,
 }
 
 impl DumpError {
@@ -43,6 +44,8 @@ impl DumpError {
             DumpError::CpuOutOfBounds => pr_alert!("munch error: cpu is invalid"),
             DumpError::BufferOutOfBounds => pr_alert!("munch error: buffer ran out of space"),
             DumpError::NotSingleByteChar(c) => pr_alert!("munch error: char '{}' cannot be representd as a single byte", c),
+            DumpError::NotReadOnly => panic!("munch error: trying to read when not locked"),
+            DumpError::RingBufferUninitialized => pr_alert!("munch error: trying to read when ring buffer uninitialized"),
         }
     }
 }
@@ -60,26 +63,29 @@ impl SetError {
 
 impl RustMunchState {
     fn get_data_for_cpu(&mut self, cpu: usize, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
-        let bufs = self.bufs.as_mut().unwrap();
-        let cpu_buf_reader = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
-        let buf_reader = cpu_buf_reader.access_reader();
-        let buf: &RingBuffer = &buf_reader;
-        seq_file.write(&buf)?;
+        let bufs = self.bufs.as_mut().ok_or(DumpError::RingBufferUninitialized)?;
+        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        let buffer = buf_lock.access_reader()?;
+        seq_file.write(&buffer)?;
         seq_file.write(&'\n')?;
         seq_file.write_byte(0)?; // null termination
         Ok(())
     }
 
+    fn start_dump(&mut self, cpu: usize) -> Result<(), DumpError> {
+        let bufs = self.bufs.as_mut().ok_or(DumpError::RingBufferUninitialized)?;
+        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        buf_lock.lock_readonly();
+        Ok(())
+    }
+
     fn finalize_dump(&mut self, cpu: usize) -> Result<(), DumpError> {
-        let bufs = self.bufs.as_mut().unwrap();
-        let cpu_buf_reader = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
-        let mut buf_reader = cpu_buf_reader.access_reader();
-        buf_reader.reset();
+        let bufs = self.bufs.as_mut().ok_or(DumpError::RingBufferUninitialized)?;
+        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        buf_lock.reset();
         Ok(())
     }
 }
-
-const NUM_ENTRIES: usize = 256;
 
 static mut RUST_MUNCH_STATE: RustMunchState = RustMunchState {
     bufs: None,
@@ -111,7 +117,8 @@ impl kernel::Module for RustMunch {
             .expect("alloc failure");
         for i in 0..cpu_count {
             let sd_count = unsafe { bindings::nr_sched_domains(i) };
-            bufs.push(RingBufferLock::new(NUM_ENTRIES, i, sd_count, cpu_count), GFP_KERNEL)
+            let entries = unsafe { bindings::MUNCH_NUM_ENTRIES };
+            bufs.push(RingBufferLock::new(entries, i, sd_count, cpu_count), GFP_KERNEL)
                 .expect("alloc failure (should not happen)");
         }
 
@@ -147,10 +154,10 @@ fn get_current(md: &bindings::meal_descriptor) -> Result<&mut LoadBalanceInfo, S
         let age = (*md).age;
         let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
         if let Some(bufs) = maybe_bufs {
-            let buf = &mut bufs[cpu_number];
-            let buf_writer = buf.access_writer()?;
-            if buf_writer.age.load(Ordering::SeqCst) == age {
-                return Ok(buf_writer.buffer.get(entry_idx));
+            let buf_lock = &mut bufs[cpu_number];
+            let buffer = buf_lock.access_writer()?;
+            if buffer.age.load(Ordering::SeqCst) == age {
+                return Ok(buffer.get(entry_idx));
             } else {
                 return Err(SetError::OldMealDescriptor);
             }
@@ -195,7 +202,7 @@ impl MunchOps for RustMunch {
         let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
         if let Some(bufs) = maybe_bufs {
             let buf = &mut bufs[cpu_number];
-            let meal_descriptor = buf.access_writer().map(|mut b| b.open_meal_descriptor());
+            let meal_descriptor = buf.access_writer().map(|b| b.open_meal_descriptor());
             if let Ok(md) = meal_descriptor {
                 return md;
             }
@@ -206,6 +213,17 @@ impl MunchOps for RustMunch {
     fn close_meal(md: &bindings::meal_descriptor) {
         if let Err(e) = get_current(md).map(|e| e.mark_finished()) {
             e.print_error();
+        }
+    }
+
+    fn start_dump(cpu: usize) -> Result<(), Error> {
+        let result = unsafe { RUST_MUNCH_STATE.start_dump(cpu) };
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                e.print_error();
+                return e.to_errno();
+            }
         }
     }
 
@@ -253,58 +271,6 @@ struct RingBufferLock {
     info: RingBuffer,
 }
 
-struct RingBufferReadGuard<'a> {
-    buffer: &'a mut RingBuffer,
-    readonly: &'a mut AtomicBool,
-}
-
-impl<'a> RingBufferReadGuard<'a> {
-    fn new(buffer: &'a mut RingBuffer, readonly: &'a mut AtomicBool) -> Self {
-        readonly.store(true, Ordering::SeqCst);
-        RingBufferReadGuard {
-            buffer: buffer,
-            readonly: readonly,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.buffer.reset();
-        self.readonly.store(false, Ordering::SeqCst);
-    }
-}
-
-impl<'a> Deref for RingBufferReadGuard<'a> {
-    type Target = RingBuffer;
-    fn deref(&self) -> &RingBuffer {
-        return self.buffer;
-    }
-}
-
-struct RingSeqFileWriteGuard<'a> {
-    buffer: &'a mut RingBuffer,
-}
-
-impl<'a> RingSeqFileWriteGuard<'a> {
-    fn new(buffer: &'a mut RingBuffer) -> Self {
-        RingSeqFileWriteGuard {
-            buffer: buffer,
-        }
-    }
-}
-
-impl<'a> Deref for RingSeqFileWriteGuard<'a> {
-    type Target = RingBuffer;
-    fn deref(&self) -> &RingBuffer {
-        return self.buffer;
-    }
-}
-
-impl<'a> DerefMut for RingSeqFileWriteGuard<'a> {
-    fn deref_mut(&mut self) -> &mut RingBuffer {
-        return self.buffer;
-    }
-}
-
 impl<'a> RingBufferLock {
     fn new(n: usize, cpu: usize, sd_count: usize, cpu_count: usize) -> Self {
         RingBufferLock {
@@ -313,17 +279,35 @@ impl<'a> RingBufferLock {
         }
     }
 
-    fn access_writer(&'a mut self) -> Result<RingSeqFileWriteGuard<'a>, SetError> {
+    fn access_writer(&'a mut self) -> Result<&'a mut RingBuffer, SetError> {
         let is_readonly = self.readonly.load(Ordering::SeqCst);
         if is_readonly {
             return Err(SetError::LockedForReading);
         } else {
-            return Ok(RingSeqFileWriteGuard::new(&mut self.info));
+            return Ok(&mut self.info);
         }
     }
 
-    fn access_reader(&'a mut self) -> RingBufferReadGuard<'a> {
-        return RingBufferReadGuard::new(&mut self.info, &mut self.readonly);
+    fn lock_readonly(&'a mut self) {
+        let was_readonly = self.readonly.swap(true, Ordering::SeqCst);
+        if was_readonly {
+            pr_alert!("warning: marking a readonly buffer as readonly");
+        }
+    }
+
+    fn access_reader(&'a self) -> Result<&'a RingBuffer, DumpError> {
+        if !self.readonly.load(Ordering::SeqCst) {
+            return Err(DumpError::NotReadOnly); 
+        }
+        return Ok(&self.info);
+    }
+
+    fn reset(&'a mut self) {
+        self.info.reset();
+        let was_readonly = self.readonly.swap(false, Ordering::SeqCst);
+        if !was_readonly {
+            pr_alert!("munch warning: resetting a writeable buffer");
+        }
     }
 }
 

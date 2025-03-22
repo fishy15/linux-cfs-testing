@@ -24,9 +24,11 @@ pub trait MunchOps: Sized {
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor;
     /// close a meal
     fn close_meal(md: &bindings::meal_descriptor);
+    /// start a dump
+    fn start_dump(cpu: usize) -> Result<()>;
     /// write to procfs
     fn dump_data(m: *mut bindings::seq_file, cpu: usize) -> Result<isize>;
-    /// finalize a write
+    /// finalize a dump
     fn finalize_dump(cpu: usize) -> Result<()>;
 }
 
@@ -81,6 +83,10 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         }
     }
 
+    unsafe extern "C" fn start_dump_c(cpu: usize) {
+        T::start_dump(cpu).unwrap();
+    }
+
     unsafe extern "C" fn dump_data_c(seq_file: *mut bindings::seq_file, cpu: usize) -> isize {
         match T::dump_data(seq_file, cpu) {
             Ok(sz) => sz,
@@ -100,6 +106,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         munch_bool_cpu: Some(Self::munch_bool_cpu_c),
         open_meal: Some(Self::open_meal_c),
         close_meal: Some(Self::close_meal_c),
+        start_dump: Some(Self::start_dump_c),
         dump_data: Some(Self::dump_data_c),
         finalize_dump: Some(Self::finalize_dump_c),
     };

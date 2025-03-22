@@ -39,6 +39,9 @@ struct munch_ops {
 	void (*munch_bool_cpu) (struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
 	void (*open_meal) (size_t, struct meal_descriptor *);
 	void (*close_meal) (struct meal_descriptor *);
+
+	// dump sequence
+	void (*start_dump) (size_t cpu);
 	ssize_t (*dump_data) (struct seq_file *m, size_t cpu);
 	void (*finalize_dump) (size_t cpu);
 };
@@ -60,5 +63,7 @@ bool munch_seq_has_overflowed(struct seq_file *m);
 
 // get info from kernel
 size_t nr_sched_domains(size_t cpu);
+
+extern const size_t MUNCH_NUM_ENTRIES;
 
 #endif
