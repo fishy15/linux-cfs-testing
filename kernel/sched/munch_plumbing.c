@@ -61,30 +61,71 @@ void close_meal(struct meal_descriptor *md) {
 // procfs
 
 #define PROCFS_NAME "munch" 
+#define GET_CPU(m) (size_t) m->private
 
 static struct proc_dir_entry *munch_procfs; 
 
 static int show_munch(struct seq_file *m) {
-	size_t cpu = (size_t) m->private;
-
 	if (is_muncher_valid) {
-		pr_alert("starting dump!");
-		muncher.start_dump(cpu);
-		unsigned long res = muncher.dump_data(m, cpu);
-		pr_alert("output of dump: %ld\n", res);
-		if (!seq_has_overflowed(m)) {
-			muncher.finalize_dump(cpu);
-		} else {
-			pr_alert("restarting dump...");
-		}
+		size_t cpu = GET_CPU(m);
+		return muncher.dump_data(m, cpu);
 	}
-
 	return 0;
 }
 
-static int munch_proc_show(struct seq_file *m, void *v) {
+static void *munch_seq_start(struct seq_file *s, loff_t *pos) {
+	pr_alert("starting at %ld\n", *pos);
+	// lock for dumping
+	// this is done before because we always calls stop
+	if (is_muncher_valid) {
+		size_t cpu = GET_CPU(s);
+		pr_alert("starting on cpu %d\n", cpu);
+		muncher.start_dump(cpu);
+	}
+
+	if (*pos >= 1) {
+		// assuming only one entry
+		return NULL;
+	}
+
+        return pos;
+}
+
+static void *munch_seq_next(struct seq_file *s, void *v, loff_t *pos) {
+	(*pos)++;
+	return NULL; // assuming one entry
+}
+
+static int munch_seq_show(struct seq_file *m, void *v) {
 	return show_munch(m);
 }
+
+static void munch_seq_stop(struct seq_file *s, void *v) {
+	// unlock for dumping
+	if (is_muncher_valid) {
+		size_t cpu = GET_CPU(s);
+		pr_alert("finalizing on cpu %d\n", cpu);
+		muncher.finalize_dump(cpu);
+	}
+}
+
+static const struct seq_operations munch_seq_ops = {
+        .start = munch_seq_start,
+        .next  = munch_seq_next,
+        .stop  = munch_seq_stop,
+        .show  = munch_seq_show
+};
+
+static int munch_open(struct inode *inode, struct file *file) {
+        return seq_open(file, &munch_seq_ops);
+}
+
+static const struct proc_ops munch_proc_ops = {
+	.proc_open    = munch_open,
+	.proc_read    = seq_read,
+	.proc_lseek   = seq_lseek,
+	.proc_release = seq_release
+};
 
 int munch_register_procfs() {
 	munch_procfs = proc_mkdir(PROCFS_NAME, NULL); 
@@ -100,7 +141,7 @@ int munch_register_procfs() {
 		sprintf(file_name, "%d", cpu);
 
 		static struct proc_dir_entry *munch_procfs_child; 
-		munch_procfs_child = proc_create_single_data(file_name, 0444, munch_procfs, munch_proc_show, (void *) cpu); 
+		munch_procfs_child = proc_create_data(file_name, 0444, munch_procfs, &munch_proc_ops, (void *) cpu); 
 		if (munch_procfs_child == NULL) { 
 			pr_alert("Error:Could not initialize /proc/%s/%s\n", PROCFS_NAME, PROCFS_NAME); 
 			return -ENOMEM; 

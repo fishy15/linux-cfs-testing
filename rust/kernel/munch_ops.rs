@@ -27,7 +27,7 @@ pub trait MunchOps: Sized {
     /// start a dump
     fn start_dump(cpu: usize) -> Result<()>;
     /// write to procfs
-    fn dump_data(m: *mut bindings::seq_file, cpu: usize) -> Result<isize>;
+    fn dump_data(m: *mut bindings::seq_file, cpu: usize) -> Result<()>;
     /// finalize a dump
     fn finalize_dump(cpu: usize) -> Result<()>;
 }
@@ -89,7 +89,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
 
     unsafe extern "C" fn dump_data_c(seq_file: *mut bindings::seq_file, cpu: usize) -> isize {
         match T::dump_data(seq_file, cpu) {
-            Ok(sz) => sz,
+            Ok(_) => 0,
             Err(e) => e.to_errno().try_into().unwrap(),
         }
     }

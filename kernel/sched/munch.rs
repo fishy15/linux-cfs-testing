@@ -2,6 +2,8 @@
 
 //! munch
 
+#![allow(dead_code)]
+
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::option::Option;
@@ -25,7 +27,7 @@ enum SetError {
 #[derive(Debug)]
 enum DumpError {
     CpuOutOfBounds,
-    BufferOutOfBounds,
+    BufferOutOfBounds(usize),
     NotSingleByteChar(char),
     NotReadOnly,
     RingBufferUninitialized,
@@ -34,7 +36,7 @@ enum DumpError {
 impl DumpError {
     fn to_errno<T>(&self) -> Result<T, Error> {
         match self {
-            DumpError::BufferOutOfBounds => Err(ENOMEM),
+            DumpError::BufferOutOfBounds(_) => Err(ENOMEM),
             _ => Err(EINVAL),
         }
     }
@@ -42,7 +44,7 @@ impl DumpError {
     fn print_error(&self) {
         match self {
             DumpError::CpuOutOfBounds => pr_alert!("munch error: cpu is invalid"),
-            DumpError::BufferOutOfBounds => pr_alert!("munch error: buffer ran out of space"),
+            DumpError::BufferOutOfBounds(bytes) => pr_alert!("munch error: buffer ran out of space ({} bytes)", bytes),
             DumpError::NotSingleByteChar(c) => pr_alert!("munch error: char '{}' cannot be representd as a single byte", c),
             DumpError::NotReadOnly => panic!("munch error: trying to read when not locked"),
             DumpError::RingBufferUninitialized => pr_alert!("munch error: trying to read when ring buffer uninitialized"),
@@ -68,7 +70,6 @@ impl RustMunchState {
         let buffer = buf_lock.access_reader()?;
         seq_file.write(&buffer)?;
         seq_file.write(&'\n')?;
-        seq_file.write_byte(0)?; // null termination
         Ok(())
     }
 
@@ -227,11 +228,11 @@ impl MunchOps for RustMunch {
         }
     }
 
-    fn dump_data(seq_file: *mut bindings::seq_file, cpu: usize) -> Result<isize, Error> {
+    fn dump_data(seq_file: *mut bindings::seq_file, cpu: usize) -> Result<(), Error> {
         let mut writer = SeqFileWriter::new(seq_file);
         let result = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu, &mut writer) };
         match result {
-            Ok(_) => Ok(writer.bytes_written.try_into().unwrap()),
+            Ok(_) => Ok(()),
             Err(e) => {
                 e.print_error();
                 return e.to_errno();
@@ -776,9 +777,9 @@ impl SeqFileWriter {
 
     fn write_byte(&mut self, byte: u8) -> Result<(), DumpError> {
         unsafe { 
-            bindings::seq_putc(self.seq_file, byte.try_into().unwrap());
+            bindings::seq_putc(self.seq_file, byte as i8);
             if bindings::munch_seq_has_overflowed(self.seq_file) {
-                return Err(DumpError::BufferOutOfBounds);
+                return Err(DumpError::BufferOutOfBounds(self.bytes_written));
             }
             self.bytes_written += 1;
             Ok(())
