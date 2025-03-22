@@ -32,7 +32,10 @@ enum DumpError {
 
 impl DumpError {
     fn to_errno<T>(&self) -> Result<T, Error> {
-        return Err(EINVAL);
+        match self {
+            DumpError::BufferOutOfBounds => Err(ENOMEM),
+            _ => Err(EINVAL),
+        }
     }
 
     fn print_error(&self) {
@@ -56,7 +59,7 @@ impl SetError {
 }
 
 impl RustMunchState {
-    fn get_data_for_cpu(&mut self, cpu: usize, buffer: &mut BufferWriter<'_>) -> Result<(), DumpError> {
+    fn get_data_for_cpu(&mut self, cpu: usize, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         let bufs = self.bufs.as_mut().unwrap();
         let cpu_buf_reader = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
         let buf_reader = cpu_buf_reader.access_reader();
@@ -206,11 +209,11 @@ impl MunchOps for RustMunch {
         }
     }
 
-    fn dump_data(buf: &mut [u8], cpu: usize) -> Result<isize, Error> {
-        let mut writer = BufferWriter::new(buf);
+    fn dump_data(seq_file: *mut bindings::seq_file, cpu: usize) -> Result<isize, Error> {
+        let mut writer = BufferWriter::new(seq_file);
         let result = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu, &mut writer) };
         match result {
-            Ok(_) => Ok(writer.head.try_into().unwrap()),
+            Ok(_) => Ok(writer.bytes_written.try_into().unwrap()),
             Err(e) => {
                 e.print_error();
                 return e.to_errno();
@@ -557,13 +560,13 @@ impl RingBuffer {
 // Writer Buffer
 // Contains a reference to some other buffer and an index
 // Various methods that try to write
-struct BufferWriter<'a> {
-    buffer: &'a mut [u8],
-    head: usize,
+struct BufferWriter {
+    seq_file: *mut bindings::seq_file,
+    bytes_written: usize,
 }
 
 trait BufferWrite {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError>;
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError>;
 }
 
 macro_rules! write_body {
@@ -590,7 +593,7 @@ macro_rules! define_write {
 }
 
 impl BufferWrite for u64 {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         let val = *self;
         if val == 0 {
             buffer.write_byte('0' as u8)
@@ -612,20 +615,20 @@ impl BufferWrite for u64 {
 }
 
 impl BufferWrite for u8 {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as u64).write(buffer) }
 }
 impl BufferWrite for u16 {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as u64).write(buffer) }
 }
 impl BufferWrite for u32 {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as u64).write(buffer) }
 }
 impl BufferWrite for usize {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as u64).write(buffer) }
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as u64).write(buffer) }
 }
 
 impl BufferWrite for i64 {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         let val = *self;
         if val == 0 {
             buffer.write_byte('0' as u8)
@@ -651,20 +654,20 @@ impl BufferWrite for i64 {
 }
 
 impl BufferWrite for i8 {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as i64).write(buffer) }
 }
 impl BufferWrite for i16 {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as i64).write(buffer) }
 }
 impl BufferWrite for i32 {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as i64).write(buffer) }
 }
 impl BufferWrite for isize {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> { (*self as i64).write(buffer) }
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> { (*self as i64).write(buffer) }
 }
 
 impl BufferWrite for char {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         let c = *self;
         let as_byte: u8 = c.try_into().or_else(|_| Err(DumpError::NotSingleByteChar(c)))?;
         buffer.write_byte(as_byte)
@@ -672,13 +675,13 @@ impl BufferWrite for char {
 }
 
 impl BufferWrite for str {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         self.chars().try_for_each(|c| buffer.write(&c))
     }
 }
 
 impl BufferWrite for bool {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         if *self {
             buffer.write("true")
         } else {
@@ -688,7 +691,7 @@ impl BufferWrite for bool {
 }
 
 impl BufferWrite for &RingBuffer {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         define_write!(buffer,
             cpu: &self.cpu,
             entries: &self.entries,
@@ -698,7 +701,7 @@ impl BufferWrite for &RingBuffer {
 }
 
 impl<T: BufferWrite> BufferWrite for KVec<T> {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         buffer.write(&'[')?;
         let mut put_comma = false;
         for entry in self.iter() {
@@ -714,7 +717,7 @@ impl<T: BufferWrite> BufferWrite for KVec<T> {
 }
 
 impl<T: BufferWrite> BufferWrite for Option<T> {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         match self {
             Some(val) => buffer.write(val),
             None => buffer.write("null"),
@@ -723,7 +726,7 @@ impl<T: BufferWrite> BufferWrite for Option<T> {
 }
 
 impl BufferWrite for bindings::cpu_idle_type {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         match self {
             bindings::cpu_idle_type::__CPU_NOT_IDLE => buffer.write("CPU_NOT_IDLE"),
             bindings::cpu_idle_type::CPU_IDLE => buffer.write("CPU_IDLE"),
@@ -734,7 +737,7 @@ impl BufferWrite for bindings::cpu_idle_type {
 }
 
 impl BufferWrite for RingBuffer {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         // skip adding a key, this should directly represent the entriess
         buffer.write(&self.entries)?;
         Ok(())
@@ -742,7 +745,7 @@ impl BufferWrite for RingBuffer {
 }
 
 impl BufferWrite for LoadBalanceInfo {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         // only write if we have finished writing to this entry
         if self.finished.load(Ordering::SeqCst) {
             define_write!(buffer,
@@ -757,7 +760,7 @@ impl BufferWrite for LoadBalanceInfo {
 }
 
 impl BufferWrite for LBIPerSchedDomain {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         define_write!(buffer,
             cpu: &self.cpu,
             cpu_idle_type: &self.cpu_idle_type,
@@ -770,7 +773,7 @@ impl BufferWrite for LBIPerSchedDomain {
 }
 
 impl BufferWrite for LBIPerCpu {
-    fn write(&self, buffer: &mut BufferWriter::<'_>) -> Result<(), DumpError> {
+    fn write(&self, buffer: &mut BufferWriter) -> Result<(), DumpError> {
         define_write!(buffer,
             idle_cpu: &self.idle_cpu, 
             is_core_idle: &self.is_core_idle,
@@ -779,20 +782,21 @@ impl BufferWrite for LBIPerCpu {
     }
 }
 
-impl<'a> BufferWriter<'a> {
-    fn new(buf: &'a mut [u8]) -> Self {
+impl BufferWriter {
+    fn new(seq_file: *mut bindings::seq_file) -> Self {
         BufferWriter {
-            buffer: buf,
-            head: 0,
+            seq_file: seq_file,
+            bytes_written: 0
         }
     }
 
     fn write_byte(&mut self, byte: u8) -> Result<(), DumpError> {
-        if self.head >= self.buffer.len() {
-            Err(DumpError::BufferOutOfBounds)
-        } else {
-            self.buffer[self.head] = byte;
-            self.head += 1;
+        unsafe { 
+            bindings::seq_putc(self.seq_file, byte.try_into().unwrap());
+            if bindings::munch_seq_has_overflowed(self.seq_file) {
+                return Err(DumpError::BufferOutOfBounds);
+            }
+            self.bytes_written += 1;
             Ok(())
         }
     }

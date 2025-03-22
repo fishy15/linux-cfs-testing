@@ -59,19 +59,20 @@ void close_meal(struct meal_descriptor *md) {
 // procfs
 
 #define PROCFS_NAME "munch" 
-#define PROCFS_BUF_SIZE 0x20000
 
 static struct proc_dir_entry *munch_procfs; 
 
 static int show_munch(struct seq_file *m) {
-	static char procfs_buffer[PROCFS_BUF_SIZE];
 	size_t cpu = (size_t) m->private;
 
 	if (is_muncher_valid) {
-		muncher.dump_data(procfs_buffer, sizeof procfs_buffer, cpu);
-		seq_puts(m, procfs_buffer);
+		pr_alert("starting dump!");
+		unsigned long res = muncher.dump_data(m, cpu);
+		pr_alert("output of dump: %ld\n", res);
 		if (!seq_has_overflowed(m)) {
 			muncher.finalize_dump(cpu);
+		} else {
+			pr_alert("restarting dump...");
 		}
 	}
 
@@ -111,6 +112,10 @@ int munch_register_procfs() {
 void munch_unregister_procfs() { 
 	remove_proc_subtree(PROCFS_NAME, NULL);
 	pr_info("/proc/%s directory removed\n", PROCFS_NAME); 
+}
+
+bool munch_seq_has_overflowed(struct seq_file *m) {
+	return seq_has_overflowed(m);
 }
 
 // helpers
