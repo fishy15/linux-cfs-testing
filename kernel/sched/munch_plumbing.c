@@ -65,10 +65,10 @@ void close_meal(struct meal_descriptor *md) {
 
 static struct proc_dir_entry *munch_procfs; 
 
-static int show_munch(struct seq_file *m) {
+static int show_munch(struct seq_file *m, size_t entry_index) {
 	if (is_muncher_valid) {
 		size_t cpu = GET_CPU(m);
-		return muncher.dump_data(m, cpu);
+		return muncher.dump_data(m, cpu, entry_index);
 	}
 	return 0;
 }
@@ -76,15 +76,15 @@ static int show_munch(struct seq_file *m) {
 static void *munch_seq_start(struct seq_file *s, loff_t *pos) {
 	pr_alert("starting at %ld\n", *pos);
 	// lock for dumping
-	// this is done before because we always calls stop
+	// this is done before any checks to match with stop
 	if (is_muncher_valid) {
 		size_t cpu = GET_CPU(s);
 		pr_alert("starting on cpu %d\n", cpu);
 		muncher.start_dump(cpu);
 	}
 
-	if (*pos >= 1) {
-		// assuming only one entry
+	if (*pos >= MUNCH_NUM_ENTRIES) {
+		// out of bounds, so don't run
 		return NULL;
 	}
 
@@ -93,11 +93,15 @@ static void *munch_seq_start(struct seq_file *s, loff_t *pos) {
 
 static void *munch_seq_next(struct seq_file *s, void *v, loff_t *pos) {
 	(*pos)++;
-	return NULL; // assuming one entry
+	if (*pos >= MUNCH_NUM_ENTRIES) {
+		return NULL;
+	}
+	return pos;
 }
 
 static int munch_seq_show(struct seq_file *m, void *v) {
-	return show_munch(m);
+	loff_t *pos = v;
+	return show_munch(m, *pos);
 }
 
 static void munch_seq_stop(struct seq_file *s, void *v) {

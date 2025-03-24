@@ -42,7 +42,7 @@ struct munch_ops {
 
 	// dump sequence
 	void (*start_dump) (size_t cpu);
-	ssize_t (*dump_data) (struct seq_file *m, size_t cpu);
+	ssize_t (*dump_data) (struct seq_file *m, size_t cpu, size_t entry_index);
 	void (*finalize_dump) (size_t cpu);
 };
 

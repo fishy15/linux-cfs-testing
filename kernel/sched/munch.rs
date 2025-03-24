@@ -28,6 +28,7 @@ enum SetError {
 enum DumpError {
     CpuOutOfBounds,
     BufferOutOfBounds(usize),
+    EntryOutOfBounds(usize),
     NotSingleByteChar(char),
     NotReadOnly,
     RingBufferUninitialized,
@@ -46,6 +47,7 @@ impl DumpError {
             DumpError::CpuOutOfBounds => pr_alert!("munch error: cpu is invalid"),
             DumpError::BufferOutOfBounds(bytes) => pr_alert!("munch error: buffer ran out of space ({} bytes)", bytes),
             DumpError::NotSingleByteChar(c) => pr_alert!("munch error: char '{}' cannot be representd as a single byte", c),
+            DumpError::EntryOutOfBounds(idx) => pr_alert!("munch error: trying to dump index {}, out of bounds", idx),
             DumpError::NotReadOnly => panic!("munch error: trying to read when not locked"),
             DumpError::RingBufferUninitialized => pr_alert!("munch error: trying to read when ring buffer uninitialized"),
         }
@@ -64,12 +66,25 @@ impl SetError {
 }
 
 impl RustMunchState {
-    fn get_data_for_cpu(&mut self, cpu: usize, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+    fn get_data_for_cpu(&mut self, cpu: usize, entry_index: usize, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         let bufs = self.bufs.as_mut().ok_or(DumpError::RingBufferUninitialized)?;
         let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
         let buffer = buf_lock.access_reader()?;
-        seq_file.write(&buffer)?;
-        seq_file.write(&'\n')?;
+        let entry = buffer.entries.get(entry_index).ok_or(DumpError::EntryOutOfBounds(entry_index))?;
+        let num_entries = buffer.entries.len();
+
+        if entry_index == 0 {
+            seq_file.write("[")?;
+        }
+
+        seq_file.write(entry)?;
+
+        if entry_index + 1 < num_entries {
+            seq_file.write(",")?;
+        } else {
+            seq_file.write("]\n")?;
+        }
+
         Ok(())
     }
 
@@ -228,9 +243,9 @@ impl MunchOps for RustMunch {
         }
     }
 
-    fn dump_data(seq_file: *mut bindings::seq_file, cpu: usize) -> Result<(), Error> {
+    fn dump_data(seq_file: *mut bindings::seq_file, cpu: usize, entry_index: usize) -> Result<(), Error> {
         let mut writer = SeqFileWriter::new(seq_file);
-        let result = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu, &mut writer) };
+        let result = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu, entry_index, &mut writer) };
         match result {
             Ok(_) => Ok(()),
             Err(e) => {
