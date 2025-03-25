@@ -11558,8 +11558,9 @@ static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 	 */
 	munch_cpu_idle_type(md, env->idle);
 	if (env->idle == CPU_NEWLY_IDLE) {
-		munch_u64(md, MUNCH_DST_RQ_NR_RUNNING, env->dst_rq->nr_running);
-		munch_bool(md, MUNCH_DST_RQ_TTWU_PENDING, env->dst_rq->ttwu_pending);
+		int dst_cpu = env->dst_cpu;
+		munch_u64_cpu(md, MUNCH_NR_RUNNING, dst_cpu, env->dst_rq->nr_running);
+		munch_bool_cpu(md, MUNCH_TTWU_PENDING, dst_cpu, env->dst_rq->ttwu_pending);
 		if (env->dst_rq->nr_running > 0 || env->dst_rq->ttwu_pending)
 			return 0;
 		return 1;

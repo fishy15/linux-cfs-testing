@@ -2,8 +2,6 @@
 
 //! munch
 
-#![allow(dead_code)]
-
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::option::Option;
@@ -208,6 +206,12 @@ impl MunchOps for RustMunch {
         }
     }
 
+    fn munch_u64_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64) {
+        if let Err(e) = get_current(md).map(|e| e.set_value_u64_cpu(&location, cpu, x)) {
+            e.print_error();
+        }
+    }
+
     fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool) {
         if let Err(e) = get_current(md).map(|e| e.set_value_bool_cpu(&location, cpu, x)) {
             e.print_error();
@@ -370,17 +374,15 @@ impl LoadBalanceInfo {
         }
     }
 
-    fn set_value_bool(&mut self, location: &bindings::munch_location_bool, x: bool) -> Result<(), SetError> {
+    fn set_value_bool(&mut self, location: &bindings::munch_location_bool, _x: bool) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
             panic!("trying to write when entry has finished");
         }
 
         match location {
-            bindings::munch_location_bool::MUNCH_DST_RQ_TTWU_PENDING
-                => self.get_current_sd()?.dst_rq_ttwu_pending = Some(x),
+            _ => todo!(),
         };
-        Ok(())
     }
 
     fn set_value_u64(&mut self, location: &bindings::munch_location_u64, x: u64) -> Result<(), SetError> {
@@ -392,8 +394,6 @@ impl LoadBalanceInfo {
         match location {
             bindings::munch_location_u64::MUNCH_CPU_NUMBER
                 => self.get_current_sd()?.cpu = Some(x),
-            bindings::munch_location_u64::MUNCH_DST_RQ_NR_RUNNING
-                => self.get_current_sd()?.dst_rq_nr_running = Some(x),
             bindings::munch_location_u64::MUNCH_GROUP_BALANCE_CPU_SG
                 => self.get_current_sd()?.group_balance_cpu_sg = Some(x),
         };
@@ -412,6 +412,7 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
+    // TODO: set the idle type on the correct cpu
     fn set_cpu_idle_type(&mut self, idle_type: &bindings::cpu_idle_type) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
@@ -423,17 +424,34 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
-    fn set_value_bool_cpu(&mut self, location: &bindings::munch_location_bool_cpu, cpu: usize, x: bool) -> Result<(), SetError> {
+    fn set_value_u64_cpu(&mut self, location: &bindings::munch_location_u64_cpu, cpu: usize, x: u64) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
             panic!("trying to write when entry has finished");
         }
 
         match location {
+            bindings::munch_location_u64_cpu::MUNCH_NR_RUNNING
+                => self.get_cpu(cpu)?.nr_running = Some(x),
+        };
+        Ok(())
+    }
+
+
+    fn set_value_bool_cpu(&mut self, location: &bindings::munch_location_bool_cpu, cpu: usize, x: bool) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let cur_cpu = self.get_cpu(cpu)?;
+        match location {
             bindings::munch_location_bool_cpu::MUNCH_IDLE_CPU
-                => self.get_cpu(cpu)?.idle_cpu = Some(x),
+                => cur_cpu.idle_cpu = Some(x),
             bindings::munch_location_bool_cpu::MUNCH_IS_CORE_IDLE
-                => self.get_cpu(cpu)?.is_core_idle = Some(x),
+                => cur_cpu.is_core_idle = Some(x),
+            bindings::munch_location_bool_cpu::MUNCH_TTWU_PENDING
+                => cur_cpu.ttwu_pending = Some(x),
         };
         Ok(())
     }
@@ -459,8 +477,6 @@ struct LBIPerSchedDomain {
     finished: AtomicBool,
     cpu: Option<u64>,
     cpu_idle_type: Option<bindings::cpu_idle_type>,
-    dst_rq_nr_running: Option<u64>,
-    dst_rq_ttwu_pending: Option<bool>,
     group_balance_cpu_sg: Option<u64>,
 }
 
@@ -470,8 +486,6 @@ impl LBIPerSchedDomain {
             finished: false.into(),
             cpu: None,
             cpu_idle_type: None,
-            dst_rq_nr_running: None,
-            dst_rq_ttwu_pending: None,
             group_balance_cpu_sg: None,
         }
     }
@@ -480,8 +494,6 @@ impl LBIPerSchedDomain {
         self.finished.store(false, Ordering::SeqCst);
         self.cpu = None;
         self.cpu_idle_type = None;
-        self.dst_rq_nr_running = None;
-        self.dst_rq_ttwu_pending = None;
         self.group_balance_cpu_sg = None;
     }
 
@@ -496,6 +508,8 @@ impl LBIPerSchedDomain {
 struct LBIPerCpu {
     idle_cpu: Option<bool>,
     is_core_idle: Option<bool>,
+    nr_running: Option<u64>,
+    ttwu_pending: Option<bool>,
 }
 
 impl LBIPerCpu {
@@ -503,12 +517,16 @@ impl LBIPerCpu {
         LBIPerCpu {
             idle_cpu: None,
             is_core_idle: None,
+            nr_running: None,
+            ttwu_pending: None,
         }
     }
 
     fn reset(&mut self) {
         self.idle_cpu = None;
         self.is_core_idle = None;
+        self.nr_running = None;
+        self.ttwu_pending = None;
     }
 }
 
@@ -764,8 +782,6 @@ impl SeqFileWrite for LBIPerSchedDomain {
         define_write!(seq_file,
             cpu: &self.cpu,
             cpu_idle_type: &self.cpu_idle_type,
-            dst_rq_nr_running: &self.dst_rq_nr_running,
-            dst_rq_ttwu_pending: &self.dst_rq_ttwu_pending,
             group_balance_cpu_sg: &self.group_balance_cpu_sg,
         );
         Ok(())
@@ -777,6 +793,9 @@ impl SeqFileWrite for LBIPerCpu {
         define_write!(seq_file,
             idle_cpu: &self.idle_cpu, 
             is_core_idle: &self.is_core_idle,
+            nr_running: &self.nr_running,
+            ttwu_pending: &self.ttwu_pending,
+
         );
         Ok(())
     }

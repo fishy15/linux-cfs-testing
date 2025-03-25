@@ -18,6 +18,8 @@ pub trait MunchOps: Sized {
     /// munch a cpu_idle_type
     fn munch_cpu_idle_type(md: &bindings::meal_descriptor, idle_type: bindings::cpu_idle_type);
     //// traits that are per cpu
+    /// munch a u64 (per cpu)
+    fn munch_u64_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64);
     /// munch a bool (per cpu)
     fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool);
     /// open a meal
@@ -64,6 +66,12 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         }
     }
 
+    unsafe extern "C" fn munch_u64_cpu_c(md: *mut bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64) {
+        unsafe {
+            T::munch_u64_cpu(&*md, location, cpu, x)
+        }
+    }
+
     unsafe extern "C" fn munch_bool_cpu_c(md: *mut bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool) {
         unsafe {
             T::munch_bool_cpu(&*md, location, cpu, x)
@@ -103,6 +111,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         munch_bool: Some(Self::munch_bool_c),
         munch64: Some(Self::munch64_c),
         munch_cpu_idle_type: Some(Self::munch_cpu_idle_type_c),
+        munch_u64_cpu: Some(Self::munch_u64_cpu_c),
         munch_bool_cpu: Some(Self::munch_bool_cpu_c),
         open_meal: Some(Self::open_meal_c),
         close_meal: Some(Self::close_meal_c),
