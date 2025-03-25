@@ -45,7 +45,7 @@ impl DumpError {
     fn print_error(&self) {
         match self {
             DumpError::CpuOutOfBounds => pr_alert!("munch error: cpu is invalid"),
-            DumpError::BufferOutOfBounds(bytes) => pr_alert!("munch error: buffer ran out of space ({} bytes)", bytes),
+            DumpError::BufferOutOfBounds(bytes) => pr_debug!("munch error: buffer ran out of space ({} bytes)", bytes),
             DumpError::NotSingleByteChar(c) => pr_alert!("munch error: char '{}' cannot be representd as a single byte", c),
             DumpError::EntryOutOfBounds(idx) => pr_alert!("munch error: trying to dump index {}, out of bounds", idx),
             DumpError::NotReadOnly => panic!("munch error: trying to read when not locked"),

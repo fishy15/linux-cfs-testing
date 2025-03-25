@@ -61,7 +61,7 @@ void close_meal(struct meal_descriptor *md) {
 // procfs
 
 #define PROCFS_NAME "munch" 
-#define GET_CPU(m) (size_t) m->private
+#define GET_CPU(m) (size_t) ((struct seq_file *) m)->private
 
 static struct proc_dir_entry *munch_procfs; 
 
@@ -74,15 +74,6 @@ static int show_munch(struct seq_file *m, size_t entry_index) {
 }
 
 static void *munch_seq_start(struct seq_file *s, loff_t *pos) {
-	pr_alert("starting at %ld\n", *pos);
-	// lock for dumping
-	// this is done before any checks to match with stop
-	if (is_muncher_valid) {
-		size_t cpu = GET_CPU(s);
-		pr_alert("starting on cpu %d\n", cpu);
-		muncher.start_dump(cpu);
-	}
-
 	if (*pos >= MUNCH_NUM_ENTRIES) {
 		// out of bounds, so don't run
 		return NULL;
@@ -104,14 +95,7 @@ static int munch_seq_show(struct seq_file *m, void *v) {
 	return show_munch(m, *pos);
 }
 
-static void munch_seq_stop(struct seq_file *s, void *v) {
-	// unlock for dumping
-	if (is_muncher_valid) {
-		size_t cpu = GET_CPU(s);
-		pr_alert("finalizing on cpu %d\n", cpu);
-		muncher.finalize_dump(cpu);
-	}
-}
+static void munch_seq_stop(struct seq_file *s, void *v) {}
 
 static const struct seq_operations munch_seq_ops = {
         .start = munch_seq_start,
@@ -121,14 +105,27 @@ static const struct seq_operations munch_seq_ops = {
 };
 
 static int munch_open(struct inode *inode, struct file *file) {
-        return seq_open(file, &munch_seq_ops);
+        int ret = seq_open(file, &munch_seq_ops);
+	if (is_muncher_valid && ret == 0) {
+		size_t cpu = GET_CPU(file->private_data);
+		muncher.start_dump(cpu);
+	}
+	return ret;
+}
+
+static int munch_release(struct inode *inode, struct file *file) {
+	if (is_muncher_valid) {
+		size_t cpu = GET_CPU(file->private_data);
+		muncher.finalize_dump(cpu);
+	}
+	return seq_release(inode, file);
 }
 
 static const struct proc_ops munch_proc_ops = {
 	.proc_open    = munch_open,
 	.proc_read    = seq_read,
 	.proc_lseek   = seq_lseek,
-	.proc_release = seq_release
+	.proc_release = munch_release,
 };
 
 int munch_register_procfs() {
