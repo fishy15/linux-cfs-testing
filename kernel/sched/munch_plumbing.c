@@ -48,7 +48,6 @@ uint64_t munch_u64_cpu(struct meal_descriptor *md, enum munch_location_u64_cpu l
 	return x;
 }
 
-
 void set_muncher(struct munch_ops *m) {
 	memcpy(&muncher, m, sizeof(struct munch_ops));
 	is_muncher_valid = true;
@@ -181,4 +180,40 @@ size_t nr_sched_domains(size_t cpu) {
 		sd_count++;
 	}
 	return sd_count;
+}
+
+const struct sched_domain *get_sd(size_t cpu, size_t sd_index) {
+	struct rq *rq = cpu_rq(cpu);
+	struct sched_domain *sd;
+	size_t sd_count = 0;
+	for_each_domain(rq->cpu, sd) {
+		if (sd_count == sd_index) {
+			return sd;
+		}
+		sd_count++;
+	}
+	return NULL;
+}
+
+size_t nr_sched_groups(const struct sched_domain *sd) {
+	struct sched_group *sg = sd->groups;
+	size_t sg_count = 0;
+	do {
+		sg_count++;
+		sg = sg->next;
+	} while (sg != sd->groups);
+	return sg_count;
+}
+
+const struct sched_group *get_sg(const struct sched_domain *sd, size_t sg_index) {
+	struct sched_group *sg = sd->groups;
+	size_t sg_count = 0;
+	do {
+		if (sg_count == sg_index) {
+			return sg;
+		}
+		sg_count++;
+		sg = sg->next;
+	} while (sg != sd->groups);
+	return NULL;
 }

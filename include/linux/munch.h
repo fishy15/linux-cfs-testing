@@ -68,6 +68,9 @@ bool munch_seq_has_overflowed(struct seq_file *m);
 
 // get info from kernel
 size_t nr_sched_domains(size_t cpu);
+const struct sched_domain *get_sd(size_t cpu, size_t sd_index);
+size_t nr_sched_groups(const struct sched_domain *sd);
+const struct sched_group *get_sg(const struct sched_domain *sd, size_t sg_index);
 
 extern const size_t MUNCH_NUM_ENTRIES;
 

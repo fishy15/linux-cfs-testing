@@ -21,6 +21,7 @@ enum SetError {
     CPUOutOfBounds(usize),
     OldMealDescriptor,
     LockedForReading,
+    SchedGroupDoesNotExist(*const bindings::sched_group),
 }
 
 #[derive(Debug)]
@@ -32,6 +33,14 @@ enum DumpError {
     NotReadOnly,
     RingBufferUninitialized,
 }
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct SchedDomainDoesNotExist(usize, usize);
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct SchedGroupDoesNotExist(*const bindings::sched_domain, usize);
 
 impl DumpError {
     fn to_errno<T>(&self) -> Result<T, Error> {
@@ -60,6 +69,7 @@ impl SetError {
             SetError::CPUOutOfBounds(idx) => panic!("munch error: cpu index {} out of bounds", idx),
             SetError::OldMealDescriptor => pr_info!("munch error: ignored because meal descriptor is old"),
             SetError::LockedForReading => pr_info!("munch error: ignored because locked for reading"),
+            SetError::SchedGroupDoesNotExist(ptr) => panic!("munch error: sched group {:p} does not exist", ptr),
         }
     }
 }
@@ -126,13 +136,13 @@ impl kernel::Module for RustMunch {
         // SAFETY: meowww
         unsafe { bindings::set_muncher(&mut ret.table); }
 
-        let cpu_count = unsafe { bindings::nr_cpu_ids as usize };
+        let cpu_count = nr_cpus();
         let mut bufs = KVec::<RingBufferLock>
             ::with_capacity(cpu_count, GFP_KERNEL)
             .expect("alloc failure");
         for i in 0..cpu_count {
-            let sd_count = unsafe { bindings::nr_sched_domains(i) };
-            let entries = unsafe { bindings::MUNCH_NUM_ENTRIES };
+            let sd_count = nr_sched_domains(i);
+            let entries = nr_entries();
             bufs.push(RingBufferLock::new(entries, i, sd_count, cpu_count), GFP_KERNEL)
                 .expect("alloc failure (should not happen)");
         }
@@ -179,6 +189,49 @@ fn get_current(md: &bindings::meal_descriptor) -> Result<&mut LoadBalanceInfo, S
         }
     }
     return Err(SetError::OldMealDescriptor);
+}
+
+// safe wrappers around unsafe c
+
+fn nr_entries() -> usize {
+    unsafe {
+        bindings::MUNCH_NUM_ENTRIES
+    }
+}
+
+fn nr_cpus() -> usize {
+    unsafe {
+        bindings::nr_cpu_ids as usize
+    }
+}
+
+fn nr_sched_domains(cpu: usize) -> usize {
+    unsafe {
+        bindings::nr_sched_domains(cpu)
+    }
+}
+
+fn get_sd(cpu: usize, sd_index: usize) -> Result<*const bindings::sched_domain, SchedDomainDoesNotExist> {
+    let ptr = unsafe { bindings::get_sd(cpu, sd_index) };
+    if ptr.is_null() {
+        return Err(SchedDomainDoesNotExist(cpu, sd_index));
+    }
+    return Ok(ptr);
+}
+
+
+fn nr_sched_groups(sd: *const bindings::sched_domain) -> usize {
+    unsafe {
+        bindings::nr_sched_groups(sd)
+    }
+}
+
+fn get_sg(sd: *const bindings::sched_domain, sg_index: usize) -> Result<*const bindings::sched_group, SchedGroupDoesNotExist> {
+    let ptr = unsafe { bindings::get_sg(sd, sg_index) };
+    if ptr.is_null() {
+        return Err(SchedGroupDoesNotExist(sd, sg_index));
+    }
+    return Ok(ptr);
 }
 
 #[vtable]
@@ -339,11 +392,25 @@ struct LoadBalanceInfo {
     current_sd: usize,
 }
 
+fn get_sg_ptrs(cpu: usize, sd: usize) -> KVec<*const bindings::sched_group> {
+    let sd_ptr = get_sd(cpu, sd).unwrap();
+    let sg_count = nr_sched_groups(sd_ptr);  
+
+    let mut buf = KVec::with_capacity(sg_count, GFP_KERNEL).expect("alloc failure for getting sg ptrs");
+    for i in 0..sg_count {
+        let sg_ptr = get_sg(sd_ptr, i).unwrap();
+        buf.push(sg_ptr, GFP_KERNEL).expect("alloc failure for getting sg ptrs (should not happen)");
+    }
+    return buf;
+}
+
 impl LoadBalanceInfo {
-    fn new(sd_count: usize, cpu_count: usize) -> Self {
+    fn new(cpu: usize, sd_count: usize, cpu_count: usize) -> Self {
+        // get list of sched group pointers
         let mut sd_entries = KVec::with_capacity(sd_count, GFP_KERNEL).expect("alloc failure for lbi sd (reserve)");
-        for _ in 0..sd_count {
-            sd_entries.push(LBIPerSchedDomain::new(), GFP_KERNEL)
+        for sd_idx in 0..sd_count {
+            let sg_ptrs = get_sg_ptrs(cpu, sd_idx);
+            sd_entries.push(LBIPerSchedDomain::new(sg_ptrs), GFP_KERNEL)
                 .expect("alloc failure for lbi sd (push)");
         }
 
@@ -476,27 +543,6 @@ impl LoadBalanceInfo {
     }
 }
 
-impl LBIPerSchedDomain {
-    fn new() -> Self {
-        LBIPerSchedDomain {
-            finished: false.into(),
-            info: LBIPerSchedDomainInfo::new(),
-        }
-    }
-
-    fn reset(&mut self) {
-        self.finished.store(false, Ordering::SeqCst);
-        self.info.reset();
-    }
-
-    fn mark_finished(&mut self) {
-        let old_finished = self.finished.swap(true, Ordering::SeqCst);
-        if old_finished {
-            panic!("trying to finish an already finished LBIPerSchedDomain");
-        }
-    }
-}
-
 struct RingBuffer {
     age: AtomicUsize,
     cpu: usize,
@@ -508,7 +554,7 @@ impl RingBuffer {
     fn new(n: usize, cpu: usize, sd_count: usize, cpu_count: usize) -> Self {
         let mut buffers = KVec::with_capacity(n, GFP_KERNEL).expect("alloc failure when reserving");
         for _ in 0..n {
-            buffers.push(LoadBalanceInfo::new(sd_count, cpu_count), GFP_KERNEL).expect("alloc failure when pushing");
+            buffers.push(LoadBalanceInfo::new(cpu, sd_count, cpu_count), GFP_KERNEL).expect("alloc failure when pushing");
         }
 
         return RingBuffer {
@@ -624,9 +670,56 @@ defaultable_struct! {
     }
 }
 
+defaultable_struct! {
+    LBIPerSchedGroup {
+        temp: u64
+    }
+}
+
 struct LBIPerSchedDomain {
     finished: AtomicBool,
     info: LBIPerSchedDomainInfo,
+    group_ptrs: KVec<*const bindings::sched_group>,
+    groups: KVec<LBIPerSchedGroup>,
+}
+
+impl LBIPerSchedDomain {
+    fn new(group_ptrs: KVec<*const bindings::sched_group>) -> Self {
+        let mut group_buffer = KVec::with_capacity(group_ptrs.len(), GFP_KERNEL).expect("alloc error (sched groups)");
+        for _ in 0..group_ptrs.len() {
+            group_buffer.push(LBIPerSchedGroup::new(), GFP_KERNEL).expect("alloc error (sched groups) (should not happen");
+        }
+
+        LBIPerSchedDomain {
+            finished: false.into(),
+            info: LBIPerSchedDomainInfo::new(),
+            group_ptrs: group_ptrs,
+            groups: group_buffer,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.finished.store(false, Ordering::SeqCst);
+        self.info.reset();
+        self.groups.iter_mut().for_each(|sg| sg.reset());
+    }
+
+    fn mark_finished(&mut self) {
+        let old_finished = self.finished.swap(true, Ordering::SeqCst);
+        if old_finished {
+            panic!("trying to finish an already finished LBIPerSchedDomain");
+        }
+    }
+
+    #[allow(dead_code)]
+    fn get_sg(&mut self, ptr: *const bindings::sched_group) -> Result<&mut LBIPerSchedGroup, SetError> {
+        for i in 0..self.group_ptrs.len() {
+            if ptr == self.group_ptrs[i] {
+                return Ok(&mut self.groups[i]);
+            }
+        }
+        return Err(SetError::SchedGroupDoesNotExist(ptr));
+    }
 }
 
 impl Deref for LBIPerSchedDomain {
@@ -813,27 +906,16 @@ impl SeqFileWrite for LoadBalanceInfo {
 impl SeqFileWrite for LBIPerSchedDomain {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         if self.finished.load(Ordering::SeqCst) {
-            seq_file.write(&self.info)
+            seq_file.write("{")?;
+            seq_file.write_kv("sd", &self.info)?;
+            seq_file.write(",")?;
+            seq_file.write_kv("sgs", &self.groups)?;
+            seq_file.write("}")
         } else {
             seq_file.write("null")
         }
     }
 }
-
-/*
-impl SeqFileWrite for LBIPerCpu {
-    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
-        define_write!(seq_file,
-            idle_cpu: &self.idle_cpu, 
-            is_core_idle: &self.is_core_idle,
-            nr_running: &self.nr_running,
-            ttwu_pending: &self.ttwu_pending,
-
-        );
-        Ok(())
-    }
-}
-*/
 
 impl SeqFileWriter {
     fn new(seq_file: *mut bindings::seq_file) -> Self {
@@ -856,5 +938,12 @@ impl SeqFileWriter {
 
     fn write<T: SeqFileWrite + ?Sized>(&mut self, val: &T) -> Result<(), DumpError> {
         val.write(self)
+    }
+
+    fn write_kv<T: SeqFileWrite + ?Sized>(&mut self, key: &str, val: &T) -> Result<(), DumpError> {
+        self.write("\"")?;
+        self.write(key)?;
+        self.write("\":")?;
+        self.write(val)
     }
 }
