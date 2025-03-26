@@ -4,6 +4,7 @@
 
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::ops::{Deref, DerefMut};
 use core::option::Option;
 use kernel::{bindings, munch_ops::*, prelude::*};
 use kernel::alloc::kvec::KVec;
@@ -374,15 +375,17 @@ impl LoadBalanceInfo {
         }
     }
 
-    fn set_value_bool(&mut self, location: &bindings::munch_location_bool, _x: bool) -> Result<(), SetError> {
+    fn set_value_bool(&mut self, location: &bindings::munch_location_bool, x: bool) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
             panic!("trying to write when entry has finished");
         }
 
         match location {
-            _ => todo!(),
+            bindings::munch_location_bool::MUNCH_SWB_RESULT
+                => self.get_current_sd()?.should_we_balance = Some(x),
         };
+        Ok(())
     }
 
     fn set_value_u64(&mut self, location: &bindings::munch_location_u64, x: u64) -> Result<(), SetError> {
@@ -473,28 +476,17 @@ impl LoadBalanceInfo {
     }
 }
 
-struct LBIPerSchedDomain {
-    finished: AtomicBool,
-    cpu: Option<u64>,
-    cpu_idle_type: Option<bindings::cpu_idle_type>,
-    group_balance_cpu_sg: Option<u64>,
-}
-
 impl LBIPerSchedDomain {
     fn new() -> Self {
         LBIPerSchedDomain {
             finished: false.into(),
-            cpu: None,
-            cpu_idle_type: None,
-            group_balance_cpu_sg: None,
+            info: LBIPerSchedDomainInfo::new(),
         }
     }
 
     fn reset(&mut self) {
         self.finished.store(false, Ordering::SeqCst);
-        self.cpu = None;
-        self.cpu_idle_type = None;
-        self.group_balance_cpu_sg = None;
+        self.info.reset();
     }
 
     fn mark_finished(&mut self) {
@@ -502,31 +494,6 @@ impl LBIPerSchedDomain {
         if old_finished {
             panic!("trying to finish an already finished LBIPerSchedDomain");
         }
-    }
-}
-
-struct LBIPerCpu {
-    idle_cpu: Option<bool>,
-    is_core_idle: Option<bool>,
-    nr_running: Option<u64>,
-    ttwu_pending: Option<bool>,
-}
-
-impl LBIPerCpu {
-    fn new() -> Self {
-        LBIPerCpu {
-            idle_cpu: None,
-            is_core_idle: None,
-            nr_running: None,
-            ttwu_pending: None,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.idle_cpu = None;
-        self.is_core_idle = None;
-        self.nr_running = None;
-        self.ttwu_pending = None;
     }
 }
 
@@ -609,6 +576,72 @@ macro_rules! define_write {
         $seq_file.write(&'}')?;
     };
 }
+
+macro_rules! defaultable_struct {
+    ($name:ident { $($ks:ident: $vs:ty),+ }) => {
+        struct $name {
+            $($ks: Option<$vs>),+
+        }
+
+        impl $name {
+            fn new() -> Self {
+                $name {
+                    $($ks: None),+
+                }
+            }
+
+            fn reset(&mut self) {
+                $(self.$ks = None;)+
+            }
+        }
+
+        impl SeqFileWrite for $name {
+            fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+                define_write!(seq_file,
+                    $($ks: &self.$ks),+
+                );
+                Ok(())
+            }
+        }
+    };
+}
+
+defaultable_struct! {
+    LBIPerCpu {
+        idle_cpu: bool,
+        is_core_idle: bool,
+        nr_running: u64,
+        ttwu_pending: bool
+    }
+}
+
+defaultable_struct! {
+    LBIPerSchedDomainInfo {
+        cpu: u64,
+        cpu_idle_type: bindings::cpu_idle_type,
+        group_balance_cpu_sg: u64,
+        should_we_balance: bool
+    }
+}
+
+struct LBIPerSchedDomain {
+    finished: AtomicBool,
+    info: LBIPerSchedDomainInfo,
+}
+
+impl Deref for LBIPerSchedDomain {
+    type Target = LBIPerSchedDomainInfo;
+    fn deref(&self) -> &Self::Target {
+        &self.info
+    }
+}
+
+impl DerefMut for LBIPerSchedDomain {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.info
+    }
+}
+
 
 impl SeqFileWrite for u64 {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
@@ -779,15 +812,15 @@ impl SeqFileWrite for LoadBalanceInfo {
 
 impl SeqFileWrite for LBIPerSchedDomain {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
-        define_write!(seq_file,
-            cpu: &self.cpu,
-            cpu_idle_type: &self.cpu_idle_type,
-            group_balance_cpu_sg: &self.group_balance_cpu_sg,
-        );
-        Ok(())
+        if self.finished.load(Ordering::SeqCst) {
+            seq_file.write(&self.info)
+        } else {
+            seq_file.write("null")
+        }
     }
 }
 
+/*
 impl SeqFileWrite for LBIPerCpu {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         define_write!(seq_file,
@@ -800,6 +833,7 @@ impl SeqFileWrite for LBIPerCpu {
         Ok(())
     }
 }
+*/
 
 impl SeqFileWriter {
     fn new(seq_file: *mut bindings::seq_file) -> Self {

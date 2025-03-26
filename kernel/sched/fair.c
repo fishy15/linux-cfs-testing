@@ -11637,16 +11637,19 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 		.fbq_type	= all,
 		.tasks		= LIST_HEAD_INIT(env.tasks),
 	};
-        int karan_swb;
         
 	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
 
 	schedstat_inc(sd->lb_count[idle]);
 
-redo:
-        karan_swb = should_we_balance(&env, md);
         munch_u64(md, MUNCH_CPU_NUMBER, (uint64_t) this_cpu);
-	if (!karan_swb) {
+
+	int swb_result;
+
+redo:
+        swb_result = should_we_balance(&env, md);
+	munch_bool(md, MUNCH_SWB_RESULT, swb_result);
+	if (!swb_result) {
 		*continue_balancing = 0;
 		goto out_balanced;
 	}

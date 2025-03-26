@@ -10,7 +10,7 @@ enum munch_flag {
 };
 
 enum munch_location_bool {
-	MUNCH_BOOL_TODO, // placeholder
+	MUNCH_SWB_RESULT,
 };
 
 enum munch_location_u64 {
