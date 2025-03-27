@@ -48,6 +48,15 @@ struct meal_descriptor {
 	size_t entry_idx;
 };
 
+struct munch_iterator {
+	size_t cpu;
+	size_t entry_index;
+	size_t sd_index;
+	bool sd_main_finished;
+	size_t sg_index;
+	size_t cpu_index;
+};
+
 struct munch_ops {
 	void (*munch_flag) (struct meal_descriptor *, enum munch_flag);
 	void (*munch_bool) (struct meal_descriptor *, enum munch_location_bool, bool);
@@ -60,15 +69,16 @@ struct munch_ops {
 	void (*close_meal) (struct meal_descriptor *);
 
 	// dump sequence
-	void (*start_dump) (size_t cpu);
-	ssize_t (*dump_data) (struct seq_file *m, size_t cpu, size_t entry_index);
-	void (*finalize_dump) (size_t cpu);
+	void (*start_dump) (size_t);
+	ssize_t (*dump_data) (struct seq_file *, const struct munch_iterator *);
+	void (*move_iterator) (struct munch_iterator *);
+	void (*finalize_dump) (size_t);
 };
 
 void munch_flag(struct meal_descriptor *, enum munch_flag);
 bool munch_bool(struct meal_descriptor *, enum munch_location_bool, bool);
 uint64_t munch_u64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
-enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle_type);
+enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *, enum cpu_idle_type);
 bool munch_bool_cpu(struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
 uint64_t munch_u64_cpu(struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
 uint64_t munch_u64_group(struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *sg, uint64_t);

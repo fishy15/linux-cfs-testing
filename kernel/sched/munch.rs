@@ -13,6 +13,7 @@ use kernel::error::{Result, Error};
 
 type SchedDomainLocation = *const bindings::sched_domain;
 type SchedGroupLocation = *const bindings::sched_group;
+type MunchIterator = bindings::munch_iterator;
 
 struct RustMunchState {
     bufs: Option<KVec<RingBufferLock>>,
@@ -29,12 +30,14 @@ enum SetError {
 
 #[derive(Debug)]
 enum DumpError {
-    CpuOutOfBounds,
+    CpuOutOfBounds(usize),
     BufferOutOfBounds(usize),
     EntryOutOfBounds(usize),
     NotSingleByteChar(char),
     NotReadOnly,
     RingBufferUninitialized,
+    SDOutOfBounds(usize),
+    SGOutOfBounds(usize),
 }
 
 #[allow(dead_code)]
@@ -55,12 +58,14 @@ impl DumpError {
 
     fn print_error(&self) {
         match self {
-            DumpError::CpuOutOfBounds => pr_alert!("munch error: cpu is invalid"),
-            DumpError::BufferOutOfBounds(bytes) => pr_info!("munch error: buffer ran out of space ({} bytes)", bytes),
+            DumpError::CpuOutOfBounds(cpu) => pr_alert!("munch error: cpu {} is invalid", cpu),
+            DumpError::BufferOutOfBounds(bytes) => pr_debug!("munch error: buffer ran out of space ({} bytes)", bytes),
             DumpError::NotSingleByteChar(c) => pr_alert!("munch error: char '{}' cannot be representd as a single byte", c),
             DumpError::EntryOutOfBounds(idx) => pr_alert!("munch error: trying to dump index {}, out of bounds", idx),
             DumpError::NotReadOnly => panic!("munch error: trying to read when not locked"),
             DumpError::RingBufferUninitialized => pr_alert!("munch error: trying to read when ring buffer uninitialized"),
+            DumpError::SDOutOfBounds(idx) => pr_alert!("munch error: trying to dump sd index {}, out of bounds", idx),
+            DumpError::SGOutOfBounds(idx) => pr_alert!("munch error: trying to dump sg index {}, out of bounds", idx),
         }
     }
 }
@@ -70,7 +75,7 @@ impl SetError {
         match self {
             SetError::SDOutOfBounds(idx) => panic!("munch error: sched domain index {} out of bounds", idx),
             SetError::CPUOutOfBounds(idx) => panic!("munch error: cpu index {} out of bounds", idx),
-            SetError::OldMealDescriptor => pr_info!("munch error: ignored because meal descriptor is old"),
+            SetError::OldMealDescriptor => pr_debug!("munch error: ignored because meal descriptor is old"),
             SetError::LockedForReading => pr_info!("munch error: ignored because locked for reading"),
             SetError::SchedGroupDoesNotExist(ptr) => panic!("munch error: sched group {:p} does not exist", ptr),
         }
@@ -78,41 +83,198 @@ impl SetError {
 }
 
 impl RustMunchState {
-    fn get_data_for_cpu(&mut self, cpu: usize, entry_index: usize, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+    fn get_data(&mut self, seq_file: &mut SeqFileWriter, it: &MunchIterator) -> Result<(), DumpError> {
+        let cpu = it.cpu;
         let bufs = self.bufs.as_mut().ok_or(DumpError::RingBufferUninitialized)?;
-        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds(cpu))?;
         let buffer = buf_lock.access_reader()?;
-        let entry = buffer.entries.get(entry_index).ok_or(DumpError::EntryOutOfBounds(entry_index))?;
-        let num_entries = buffer.entries.len();
+        print_munch_iterator(seq_file, &buffer, it)
+    }
 
-        if entry_index == 0 {
-            seq_file.write("[")?;
-        }
-
-        seq_file.write(entry)?;
-
-        if entry_index + 1 < num_entries {
-            seq_file.write(",")?;
-        } else {
-            seq_file.write("]\n")?;
-        }
-
-        Ok(())
+    fn get_next_iterator(&mut self, it: &MunchIterator) -> MunchIterator {
+        let cpu = it.cpu;
+        let bufs = self.bufs.as_mut().ok_or(DumpError::RingBufferUninitialized).unwrap();
+        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds(cpu)).unwrap();
+        let buffer = buf_lock.access_reader().unwrap();
+        next_munch_iterator(it, &buffer)
     }
 
     fn start_dump(&mut self, cpu: usize) -> Result<(), DumpError> {
         let bufs = self.bufs.as_mut().ok_or(DumpError::RingBufferUninitialized)?;
-        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds(cpu))?;
         buf_lock.lock_readonly();
         Ok(())
     }
 
     fn finalize_dump(&mut self, cpu: usize) -> Result<(), DumpError> {
         let bufs = self.bufs.as_mut().ok_or(DumpError::RingBufferUninitialized)?;
-        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds)?;
+        let buf_lock = bufs.get_mut(cpu).ok_or(DumpError::CpuOutOfBounds(cpu))?;
         buf_lock.reset();
         Ok(())
     }
+}
+
+/*
+fn create_munch_iterator(cpu: usize) -> MunchIterator {
+    return MunchIterator {
+        cpu: cpu,
+        entry_index: 0,
+        sd_index: 0,
+        sd_main_finished: false,
+        sg_index: 0,
+        cpu_index: 0,
+    }
+}
+*/
+
+fn is_start_of_buffer(it: &MunchIterator) -> bool {
+    return it.entry_index == 0 && is_start_of_entry(it);
+}
+
+fn is_start_of_entry(it: &MunchIterator) -> bool {
+    return it.sd_index == 0 && !it.sd_main_finished && it.sg_index == 0 && it.cpu_index == 0;
+}
+
+fn is_printing_sd(it: &MunchIterator, entry: &LoadBalanceInfo) -> bool {
+    return it.sd_index < entry.per_sd_info.len();
+}
+
+fn is_last_sd(it: &MunchIterator, entry: &LoadBalanceInfo) -> bool {
+    return is_printing_sd(it, entry) && it.sd_index + 1 == entry.per_sd_info.len();
+}
+
+fn is_start_of_sg(it: &MunchIterator, entry: &LoadBalanceInfo) -> bool {
+    return is_printing_sd(it, entry) && it.sd_main_finished && it.sg_index == 0;
+}
+
+fn is_last_sg(it: &MunchIterator, entry: &LoadBalanceInfo, sd: &LBIPerSchedDomain) -> bool {
+    return is_printing_sd(it, entry) && it.sd_main_finished && it.sg_index + 1 == sd.groups.len();
+}
+
+fn is_start_of_cpu(it: &MunchIterator, entry: &LoadBalanceInfo) -> bool {
+    return !is_printing_sd(it, entry) && it.cpu_index == 0;
+}
+
+fn is_last_cpu(it: &MunchIterator, entry: &LoadBalanceInfo) -> bool {
+    return !is_printing_sd(it, entry) && it.cpu_index + 1 == entry.per_cpu_info.len();
+}
+
+fn is_last_entry(it: &MunchIterator, buffer: &RingBuffer) -> bool {
+    return it.entry_index + 1 == buffer.entries.len();
+}
+
+fn print_munch_iterator(seq_file: &mut SeqFileWriter, buffer: &RingBuffer, it: &MunchIterator) -> Result<(), DumpError> {
+    let entry_index = it.entry_index;
+    let entry = buffer.entries.get(entry_index).ok_or(DumpError::EntryOutOfBounds(entry_index))?;
+
+    if is_start_of_buffer(&it) {
+        seq_file.write("[")?;
+    }
+
+    if entry.finished.load(Ordering::SeqCst) {
+        if is_start_of_entry(&it) {
+            seq_file.write("{\"per_sd_info\":[")?;
+        }
+
+        if is_printing_sd(&it, &entry) {
+            let sd_index = it.sd_index;
+            let sd = entry.per_sd_info.get(sd_index).ok_or(DumpError::SDOutOfBounds(sd_index))?;
+
+            if !it.sd_main_finished {
+                seq_file.write("{\"sd\":")?;
+                seq_file.write(&sd.info)?;
+                seq_file.write(",")?;
+            } else {
+                let sg_index = it.sg_index;
+                let sg = sd.groups.get(sg_index).ok_or(DumpError::SGOutOfBounds(sg_index))?;
+                if is_start_of_sg(&it, &entry) {
+                    seq_file.write("\"groups\":[")?;
+                }
+                seq_file.write(sg)?;
+                if is_last_sg(&it, &entry, &sd) {
+                    seq_file.write("]}")?;
+                    if is_last_sd(&it, &entry) {
+                        seq_file.write("],")?;
+                    } else {
+                        seq_file.write(",")?;
+                    }
+                } else {
+                    seq_file.write(",")?;
+                }
+            }
+        } else {
+            if is_start_of_cpu(&it, &entry) {
+                seq_file.write("\"per_cpu_info\":[")?;
+            }
+
+            let cpu_index = it.cpu_index;
+            let cpu = entry.per_cpu_info.get(cpu_index).ok_or(DumpError::CpuOutOfBounds(cpu_index))?;
+            seq_file.write(cpu)?;
+            if is_last_cpu(&it, &entry) {
+                seq_file.write("]}")?;
+            } else {
+                seq_file.write(",")?;
+            }
+        }
+
+        if is_last_cpu(&it, &entry) {
+            if is_last_entry(&it, &buffer) {
+                seq_file.write("]")?;
+            } else {
+                seq_file.write(",")?;
+            }
+        }
+    } else {
+        seq_file.write("null")?;
+        if is_last_entry(&it, &buffer) {
+            seq_file.write("]")?;
+        } else {
+            seq_file.write(",")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn next_munch_iterator(it: &MunchIterator, buffer: &RingBuffer) -> MunchIterator {
+    let mut result = it.clone(); 
+
+    let entry_index = it.entry_index;
+    let entry = buffer.entries.get(entry_index).unwrap();
+
+    if entry.finished.load(Ordering::SeqCst) {
+        if is_printing_sd(&it, &entry) {
+            let sd_index = it.sd_index;
+            let sd = entry.per_sd_info.get(sd_index).ok_or(DumpError::SDOutOfBounds(sd_index)).unwrap();
+            if !it.sd_main_finished {
+                result.sd_main_finished = true;
+            } else if !is_last_sg(&it, &entry, &sd) {
+                result.sg_index += 1;
+            } else {
+                result.sd_main_finished = false;
+                result.sg_index = 0;
+                result.sd_index += 1;
+            }
+        } else {
+            if is_last_cpu(&it, &entry) {
+                result.entry_index += 1;
+                result.sd_index = 0;
+                result.sd_main_finished = false;
+                result.sg_index = 0;
+                result.cpu_index = 0;
+            } else {
+                result.cpu_index += 1;
+            }
+        }
+    } else {
+        result.entry_index += 1;
+        result.sd_index = 0;
+        result.sd_main_finished = false;
+        result.sg_index = 0;
+        result.cpu_index = 0;
+    }
+
+    return result;
 }
 
 static mut RUST_MUNCH_STATE: RustMunchState = RustMunchState {
@@ -310,16 +472,20 @@ impl MunchOps for RustMunch {
         }
     }
 
-    fn dump_data(seq_file: *mut bindings::seq_file, cpu: usize, entry_index: usize) -> Result<(), Error> {
+    fn dump_data(seq_file: *mut bindings::seq_file, it: &MunchIterator) -> Result<(), Error> {
         let mut writer = SeqFileWriter::new(seq_file);
-        let result = unsafe { RUST_MUNCH_STATE.get_data_for_cpu(cpu, entry_index, &mut writer) };
-        match result {
+        let res = unsafe { RUST_MUNCH_STATE.get_data(&mut writer, it) };
+        match res {
             Ok(_) => Ok(()),
             Err(e) => {
                 e.print_error();
                 return e.to_errno();
             }
         }
+    }
+
+    fn move_iterator(it: &MunchIterator) -> MunchIterator {
+        unsafe { RUST_MUNCH_STATE.get_next_iterator(it) }
     }
 
     fn finalize_dump(cpu: usize) -> Result<(), Error> {
@@ -929,10 +1095,10 @@ impl<T: SeqFileWrite> SeqFileWrite for Option<T> {
 impl SeqFileWrite for bindings::cpu_idle_type {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         match self {
-            bindings::cpu_idle_type::__CPU_NOT_IDLE => seq_file.write("CPU_NOT_IDLE"),
-            bindings::cpu_idle_type::CPU_IDLE => seq_file.write("CPU_IDLE"),
-            bindings::cpu_idle_type::CPU_NEWLY_IDLE => seq_file.write("CPU_NEWLY_IDLE"),
-            bindings::cpu_idle_type::CPU_MAX_IDLE_TYPES => seq_file.write("CPU_MAX_IDLE_TYPES"),
+            bindings::cpu_idle_type::__CPU_NOT_IDLE => seq_file.write("\"CPU_NOT_IDLE\""),
+            bindings::cpu_idle_type::CPU_IDLE => seq_file.write("\"CPU_IDLE\""),
+            bindings::cpu_idle_type::CPU_NEWLY_IDLE => seq_file.write("\"CPU_NEWLY_IDLE\""),
+            bindings::cpu_idle_type::CPU_MAX_IDLE_TYPES => seq_file.write("\"CPU_MAX_IDLE_TYPES\""),
         }
     }
 }

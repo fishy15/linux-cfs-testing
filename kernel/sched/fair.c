@@ -11679,8 +11679,6 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 
 	schedstat_inc(sd->lb_count[idle]);
 
-        munch_u64(md, MUNCH_CPU_NUMBER, (uint64_t) this_cpu);
-
 	int swb_result;
 
 redo:
@@ -12124,6 +12122,7 @@ static void sched_balance_domains(struct rq *rq, enum cpu_idle_type idle)
 
 	struct meal_descriptor md;
 	open_meal(cpu, &md);
+        munch_u64(&md, MUNCH_CPU_NUMBER, cpu);
 
 	rcu_read_lock();
 	for_each_domain(cpu, sd) {

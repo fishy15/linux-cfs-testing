@@ -80,38 +80,50 @@ void close_meal(struct meal_descriptor *md) {
 
 static struct proc_dir_entry *munch_procfs; 
 
-static int show_munch(struct seq_file *m, size_t entry_index) {
-	pr_info("munch: printing index %ld\n", entry_index);
+static int show_munch(struct seq_file *m, const struct munch_iterator *it) {
 	if (is_muncher_valid) {
-		size_t cpu = GET_CPU(m);
-		return muncher.dump_data(m, cpu, entry_index);
+		return muncher.dump_data(m, it);
 	}
 	return 0;
 }
 
 static void *munch_seq_start(struct seq_file *s, loff_t *pos) {
-	if (*pos >= MUNCH_NUM_ENTRIES) {
-		// out of bounds, so don't run
-		return NULL;
+	struct munch_iterator *it = kzalloc(sizeof *it, GFP_KERNEL); // all zeros is init
+	if (it != NULL && is_muncher_valid) {
+		it->cpu = GET_CPU(s);
+		for (size_t i = 0; i < *pos; i++) {
+			muncher.move_iterator(it);
+		}
+		if (it->entry_index >= MUNCH_NUM_ENTRIES) {
+			kfree(it);
+			return NULL;
+		}
+		return it;
 	}
 
-        return pos;
+        return NULL;
 }
 
 static void *munch_seq_next(struct seq_file *s, void *v, loff_t *pos) {
+	struct munch_iterator *it = v;
+	muncher.move_iterator(it);
 	(*pos)++;
-	if (*pos >= MUNCH_NUM_ENTRIES) {
+
+	if (it->entry_index >= MUNCH_NUM_ENTRIES) {
 		return NULL;
 	}
-	return pos;
+
+	return it;
 }
 
 static int munch_seq_show(struct seq_file *m, void *v) {
-	loff_t *pos = v;
-	return show_munch(m, *pos);
+	const struct munch_iterator *it = v;
+	return show_munch(m, it);
 }
 
-static void munch_seq_stop(struct seq_file *s, void *v) {}
+static void munch_seq_stop(struct seq_file *s, void *v) {
+	kfree(v);
+}
 
 static const struct seq_operations munch_seq_ops = {
         .start = munch_seq_start,

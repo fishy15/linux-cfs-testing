@@ -34,7 +34,9 @@ pub trait MunchOps: Sized {
     /// start a dump
     fn start_dump(cpu: usize) -> Result<()>;
     /// write to procfs
-    fn dump_data(m: *mut bindings::seq_file, cpu: usize, entry_index: usize) -> Result<()>;
+    fn dump_data(m: *mut bindings::seq_file, it: &bindings::munch_iterator) -> Result<()>;
+    /// move iterator forward
+    fn move_iterator(it: &bindings::munch_iterator) -> bindings::munch_iterator;
     /// finalize a dump
     fn finalize_dump(cpu: usize) -> Result<()>;
 }
@@ -106,10 +108,20 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         T::start_dump(cpu).unwrap();
     }
 
-    unsafe extern "C" fn dump_data_c(seq_file: *mut bindings::seq_file, cpu: usize, entry_index: usize) -> isize {
-        match T::dump_data(seq_file, cpu, entry_index) {
-            Ok(_) => 0,
-            Err(e) => e.to_errno().try_into().unwrap(),
+    unsafe extern "C" fn dump_data_c(seq_file: *mut bindings::seq_file, it: *const bindings::munch_iterator) -> isize {
+        unsafe {
+            match T::dump_data(seq_file, &*it) {
+                Ok(_) => 0,
+                Err(e) => e.to_errno().try_into().unwrap(),
+            }
+        }
+    }
+
+
+    unsafe extern "C" fn move_iterator_c(it: *mut bindings::munch_iterator) {
+        unsafe {
+            let mut nxt = T::move_iterator(&*it);
+            core::ptr::copy(&mut nxt as *mut bindings::munch_iterator, it, 1);
         }
     }
 
@@ -129,6 +141,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         close_meal: Some(Self::close_meal_c),
         start_dump: Some(Self::start_dump_c),
         dump_data: Some(Self::dump_data_c),
+        move_iterator: Some(Self::move_iterator_c),
         finalize_dump: Some(Self::finalize_dump_c),
     };
 
