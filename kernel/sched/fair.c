@@ -10357,6 +10357,11 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 	 * CPUs in the group should either be possible to resolve
 	 * internally or be covered by avg_load imbalance (eventually).
 	 */
+	munch_bool(md, MUNCH_ASYM_CPUCAPACITY, (env->sd->flags & SD_ASYM_CPUCAPACITY) != 0);
+	// TODO: munch group type
+	munch_u64_cpu(md, MUNCH_CPU_CAPACITY, env->dst_cpu, capacity_of(env->dst_cpu));
+	munch_u64_group(md, MUNCH_SGC_MAX_CAPACITY, sg, sg->sgc->max_capacity);	
+	// TODO: munch local type
 	if ((env->sd->flags & SD_ASYM_CPUCAPACITY) &&
 	    (sgs->group_type == group_misfit_task) &&
 	    (!capacity_greater(capacity_of(env->dst_cpu), sg->sgc->max_capacity) ||
@@ -10374,9 +10379,12 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 	 * group. Let check which one is the busiest according to the type.
 	 */
 
+	int busiest_prefer, this_prefer;
 	switch (sgs->group_type) {
 	case group_overloaded:
 		/* Select the overloaded group with highest avg_load. */
+		munch_u64_group(md, MUNCH_SG_AVG_LOAD, sg, sgs->avg_load);
+		munch_u64_group(md, MUNCH_SG_AVG_LOAD, sds->busiest, busiest->avg_load);
 		return sgs->avg_load > busiest->avg_load;
 
 	case group_imbalanced:
@@ -10388,6 +10396,13 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 
 	case group_asym_packing:
 		/* Prefer to move from lowest priority CPU's work */
+		busiest_prefer = sds->busiest->asym_prefer_cpu;
+		this_prefer = sg->asym_prefer_cpu;
+		munch_u64_group(md, MUNCH_SG_ASYM_PREFER_CPU, sds->busiest, busiest_prefer);
+		munch_u64_group(md, MUNCH_SG_ASYM_PREFER_CPU, sg, this_prefer);
+		// in the called function
+		munch_u64_cpu(md, MUNCH_ASYM_CPU_PRIORITY_VALUE, busiest_prefer, arch_asym_cpu_priority(busiest_prefer));
+		munch_u64_cpu(md, MUNCH_ASYM_CPU_PRIORITY_VALUE, this_prefer, arch_asym_cpu_priority(this_prefer));
 		return sched_asym_prefer(sds->busiest->asym_prefer_cpu, sg->asym_prefer_cpu);
 
 	case group_misfit_task:
@@ -10395,6 +10410,8 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 		 * If we have more than one misfit sg go with the biggest
 		 * misfit.
 		 */
+		munch_u64_group(md, MUNCH_MISFIT_TASK_LOAD, sg, sgs->group_misfit_task_load);
+		munch_u64_group(md, MUNCH_MISFIT_TASK_LOAD, sds->busiest, busiest->group_misfit_task_load);
 		return sgs->group_misfit_task_load > busiest->group_misfit_task_load;
 
 	case group_smt_balance:
@@ -10402,6 +10419,8 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 		 * Check if we have spare CPUs on either SMT group to
 		 * choose has spare or fully busy handling.
 		 */
+		munch_u64_group(md, MUNCH_SG_IDLE_CPUS, sg, sgs->idle_cpus);
+		munch_u64_group(md, MUNCH_SG_IDLE_CPUS, sds->busiest, busiest->idle_cpus);
 		if (sgs->idle_cpus != 0 || busiest->idle_cpus != 0)
 			goto has_spare;
 
@@ -10420,6 +10439,9 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 		 * siblings.
 		 */
 
+		munch_u64_group(md, MUNCH_SG_AVG_LOAD, sg, sgs->avg_load);
+		munch_u64_group(md, MUNCH_SG_AVG_LOAD, sds->busiest, busiest->avg_load);
+
 		if (sgs->avg_load < busiest->avg_load)
 			return false;
 
@@ -10428,6 +10450,7 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 			 * SMT sched groups need more help than non-SMT groups.
 			 * If @sg happens to also be SMT, either choice is good.
 			 */
+			// TODO: munch this flag (bool per sg)
 			if (sds->busiest->flags & SD_SHARE_CPUCAPACITY)
 				return false;
 		}
@@ -10440,7 +10463,9 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 		 * as we do not want to pull task off SMT core with one task
 		 * and make the core idle.
 		 */
+		// TODO: munch SD_SHARE_CPUCAPACITY flag (bool per sg)
 		if (smt_vs_nonsmt_groups(sds->busiest, sg)) {
+			munch_u64_group(md, MUNCH_SUM_H_NR_RUNNING, sg, sgs->sum_h_nr_running);
 			if (sg->flags & SD_SHARE_CPUCAPACITY && sgs->sum_h_nr_running <= 1)
 				return false;
 			else
@@ -10455,6 +10480,12 @@ has_spare:
 		 * that the group has less spare capacity but finally more idle
 		 * CPUs which means less opportunity to pull tasks.
 		 */
+
+		// TODO: move sum munches after the if
+		munch_u64_group(md, MUNCH_SG_IDLE_CPUS, sg, sgs->idle_cpus);
+		munch_u64_group(md, MUNCH_SG_IDLE_CPUS, sds->busiest, busiest->idle_cpus);
+		munch_u64_group(md, MUNCH_SUM_NR_RUNNING, sg, sgs->sum_nr_running);
+		munch_u64_group(md, MUNCH_SUM_NR_RUNNING, sds->busiest, busiest->sum_nr_running);
 		if (sgs->idle_cpus > busiest->idle_cpus)
 			return false;
 		else if ((sgs->idle_cpus == busiest->idle_cpus) &&
@@ -10470,6 +10501,10 @@ has_spare:
 	 * throughput. Maximize throughput, power/energy consequences are not
 	 * considered.
 	 */
+	munch_bool(md, MUNCH_ASYM_CPUCAPACITY, (env->sd->flags & SD_ASYM_CPUCAPACITY) != 0);
+	// TODO: munch group type
+	munch_u64_group(md, MUNCH_SGC_MIN_CAPACITY, sg, sg->sgc->min_capacity);	
+	munch_u64_cpu(md, MUNCH_CPU_CAPACITY, env->dst_cpu, capacity_of(env->dst_cpu));
 	if ((env->sd->flags & SD_ASYM_CPUCAPACITY) &&
 	    (sgs->group_type <= group_fully_busy) &&
 	    (capacity_greater(sg->sgc->min_capacity, capacity_of(env->dst_cpu))))

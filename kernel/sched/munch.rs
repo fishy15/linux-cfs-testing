@@ -457,9 +457,13 @@ impl LoadBalanceInfo {
             panic!("trying to write when entry has finished");
         }
 
+        let sd = self.get_current_sd()?;
+
         match location {
             bindings::munch_location_bool::MUNCH_SWB_RESULT
-                => self.get_current_sd()?.should_we_balance = Some(x),
+                => sd.should_we_balance = Some(x),
+            bindings::munch_location_bool::MUNCH_ASYM_CPUCAPACITY
+                => sd.asym_cpucapacity = Some(x),
         };
         Ok(())
     }
@@ -512,6 +516,10 @@ impl LoadBalanceInfo {
         match location {
             bindings::munch_location_u64_cpu::MUNCH_NR_RUNNING
                 => self.get_cpu(cpu)?.nr_running = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_CPU_CAPACITY
+                => self.get_cpu(cpu)?.capacity = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_ASYM_CPU_PRIORITY_VALUE
+                => self.get_cpu(cpu)?.asym_cpu_priority = Some(x),
         };
         Ok(())
     }
@@ -546,6 +554,20 @@ impl LoadBalanceInfo {
         match location {
             bindings::munch_location_u64_group::MUNCH_SUM_H_NR_RUNNING
                 => sg.sum_h_nr_running = Some(x),
+            bindings::munch_location_u64_group::MUNCH_SUM_NR_RUNNING
+                => sg.sum_nr_running = Some(x),
+            bindings::munch_location_u64_group::MUNCH_SGC_MAX_CAPACITY
+                => sg.max_capacity = Some(x),
+            bindings::munch_location_u64_group::MUNCH_SGC_MIN_CAPACITY
+                => sg.min_capacity = Some(x),
+            bindings::munch_location_u64_group::MUNCH_SG_AVG_LOAD
+                => sg.avg_load = Some(x),
+            bindings::munch_location_u64_group::MUNCH_SG_ASYM_PREFER_CPU
+                => sg.asym_prefer_cpu = Some(x),
+            bindings::munch_location_u64_group::MUNCH_MISFIT_TASK_LOAD
+                => sg.misfit_task_load = Some(x),
+            bindings::munch_location_u64_group::MUNCH_SG_IDLE_CPUS
+                => sg.idle_cpus = Some(x),
         };
         Ok(())
     }
@@ -681,7 +703,9 @@ defaultable_struct! {
         idle_cpu: bool,
         is_core_idle: bool,
         nr_running: u64,
-        ttwu_pending: bool
+        ttwu_pending: bool,
+        capacity: u64,
+        asym_cpu_priority: u64,
     }
 }
 
@@ -690,13 +714,22 @@ defaultable_struct! {
         cpu: u64,
         cpu_idle_type: bindings::cpu_idle_type,
         group_balance_cpu_sg: u64,
-        should_we_balance: bool
+        asym_cpucapacity: bool,
+        share_cpucapacity: bool,
+        should_we_balance: bool,
     }
 }
 
 defaultable_struct! {
     LBIPerSchedGroup {
         sum_h_nr_running: u64,
+        sum_nr_running: u64,
+        max_capacity: u64,
+        min_capacity: u64,
+        avg_load: u64,
+        asym_prefer_cpu: u64,
+        misfit_task_load: u64,
+        idle_cpus: u64,
     }
 }
 

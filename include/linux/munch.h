@@ -11,6 +11,7 @@ enum munch_flag {
 
 enum munch_location_bool {
 	MUNCH_SWB_RESULT,
+	MUNCH_ASYM_CPUCAPACITY,
 };
 
 enum munch_location_u64 {
@@ -20,6 +21,8 @@ enum munch_location_u64 {
 
 enum munch_location_u64_cpu {
 	MUNCH_NR_RUNNING,
+	MUNCH_CPU_CAPACITY,
+	MUNCH_ASYM_CPU_PRIORITY_VALUE,
 };
 
 enum munch_location_bool_cpu {
@@ -30,6 +33,13 @@ enum munch_location_bool_cpu {
 
 enum munch_location_u64_group {
 	MUNCH_SUM_H_NR_RUNNING,
+	MUNCH_SUM_NR_RUNNING,
+	MUNCH_SGC_MAX_CAPACITY,
+	MUNCH_SGC_MIN_CAPACITY,
+	MUNCH_SG_AVG_LOAD,
+	MUNCH_SG_ASYM_PREFER_CPU,
+	MUNCH_MISFIT_TASK_LOAD,
+	MUNCH_SG_IDLE_CPUS,
 };
 
 struct meal_descriptor {
