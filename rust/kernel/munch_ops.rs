@@ -5,6 +5,8 @@ use crate::{bindings, macros};
 use core::marker::PhantomData;
 use kernel::error::Result;
 
+type SchedGroupLocation = *const bindings::sched_group;
+
 /// impl to munch
 #[macros::vtable]
 pub trait MunchOps: Sized {
@@ -22,6 +24,9 @@ pub trait MunchOps: Sized {
     fn munch_u64_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64);
     /// munch a bool (per cpu)
     fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool);
+    //// traits that are per group
+    /// munch a u64 (per group)
+    fn munch_u64_group(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_group, sg: SchedGroupLocation, x: u64);
     /// open a meal
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor;
     /// close a meal
@@ -78,6 +83,12 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         }
     }
 
+    unsafe extern "C" fn munch_u64_group_c(md: *mut bindings::meal_descriptor, location: bindings::munch_location_u64_group, sg: SchedGroupLocation, x: u64) {
+        unsafe {
+            T::munch_u64_group(&*md, location, sg, x)
+        }
+    }
+
     unsafe extern "C" fn open_meal_c(cpu_number: usize, md: *mut bindings::meal_descriptor) {
         let md_ = T::open_meal(cpu_number);
         unsafe {
@@ -113,6 +124,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         munch_cpu_idle_type: Some(Self::munch_cpu_idle_type_c),
         munch_u64_cpu: Some(Self::munch_u64_cpu_c),
         munch_bool_cpu: Some(Self::munch_bool_cpu_c),
+        munch_u64_group: Some(Self::munch_u64_group_c),
         open_meal: Some(Self::open_meal_c),
         close_meal: Some(Self::close_meal_c),
         start_dump: Some(Self::start_dump_c),

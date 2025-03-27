@@ -11,6 +11,9 @@ use kernel::alloc::kvec::KVec;
 use kernel::alloc::flags::GFP_KERNEL;
 use kernel::error::{Result, Error};
 
+type SchedDomainLocation = *const bindings::sched_domain;
+type SchedGroupLocation = *const bindings::sched_group;
+
 struct RustMunchState {
     bufs: Option<KVec<RingBufferLock>>,
 }
@@ -21,7 +24,7 @@ enum SetError {
     CPUOutOfBounds(usize),
     OldMealDescriptor,
     LockedForReading,
-    SchedGroupDoesNotExist(*const bindings::sched_group),
+    SchedGroupDoesNotExist(SchedGroupLocation),
 }
 
 #[derive(Debug)]
@@ -40,7 +43,7 @@ struct SchedDomainDoesNotExist(usize, usize);
 
 #[allow(dead_code)]
 #[derive(Debug)]
-struct SchedGroupDoesNotExist(*const bindings::sched_domain, usize);
+struct SchedGroupDoesNotExist(SchedDomainLocation, usize);
 
 impl DumpError {
     fn to_errno<T>(&self) -> Result<T, Error> {
@@ -53,7 +56,7 @@ impl DumpError {
     fn print_error(&self) {
         match self {
             DumpError::CpuOutOfBounds => pr_alert!("munch error: cpu is invalid"),
-            DumpError::BufferOutOfBounds(bytes) => pr_debug!("munch error: buffer ran out of space ({} bytes)", bytes),
+            DumpError::BufferOutOfBounds(bytes) => pr_info!("munch error: buffer ran out of space ({} bytes)", bytes),
             DumpError::NotSingleByteChar(c) => pr_alert!("munch error: char '{}' cannot be representd as a single byte", c),
             DumpError::EntryOutOfBounds(idx) => pr_alert!("munch error: trying to dump index {}, out of bounds", idx),
             DumpError::NotReadOnly => panic!("munch error: trying to read when not locked"),
@@ -211,7 +214,7 @@ fn nr_sched_domains(cpu: usize) -> usize {
     }
 }
 
-fn get_sd(cpu: usize, sd_index: usize) -> Result<*const bindings::sched_domain, SchedDomainDoesNotExist> {
+fn get_sd(cpu: usize, sd_index: usize) -> Result<SchedDomainLocation, SchedDomainDoesNotExist> {
     let ptr = unsafe { bindings::get_sd(cpu, sd_index) };
     if ptr.is_null() {
         return Err(SchedDomainDoesNotExist(cpu, sd_index));
@@ -220,13 +223,13 @@ fn get_sd(cpu: usize, sd_index: usize) -> Result<*const bindings::sched_domain, 
 }
 
 
-fn nr_sched_groups(sd: *const bindings::sched_domain) -> usize {
+fn nr_sched_groups(sd: SchedDomainLocation) -> usize {
     unsafe {
         bindings::nr_sched_groups(sd)
     }
 }
 
-fn get_sg(sd: *const bindings::sched_domain, sg_index: usize) -> Result<*const bindings::sched_group, SchedGroupDoesNotExist> {
+fn get_sg(sd: SchedDomainLocation, sg_index: usize) -> Result<SchedGroupLocation, SchedGroupDoesNotExist> {
     let ptr = unsafe { bindings::get_sg(sd, sg_index) };
     if ptr.is_null() {
         return Err(SchedGroupDoesNotExist(sd, sg_index));
@@ -268,6 +271,12 @@ impl MunchOps for RustMunch {
 
     fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool) {
         if let Err(e) = get_current(md).map(|e| e.set_value_bool_cpu(&location, cpu, x)) {
+            e.print_error();
+        }
+    }
+
+    fn munch_u64_group(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_group, sg: SchedGroupLocation, x: u64) {
+        if let Err(e) = get_current(md).map(|e| e.set_value_u64_group(&location, sg, x)) {
             e.print_error();
         }
     }
@@ -392,7 +401,7 @@ struct LoadBalanceInfo {
     current_sd: usize,
 }
 
-fn get_sg_ptrs(cpu: usize, sd: usize) -> KVec<*const bindings::sched_group> {
+fn get_sg_ptrs(cpu: usize, sd: usize) -> KVec<SchedGroupLocation> {
     let sd_ptr = get_sd(cpu, sd).unwrap();
     let sg_count = nr_sched_groups(sd_ptr);  
 
@@ -507,7 +516,6 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
-
     fn set_value_bool_cpu(&mut self, location: &bindings::munch_location_bool_cpu, cpu: usize, x: bool) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
@@ -522,6 +530,22 @@ impl LoadBalanceInfo {
                 => cur_cpu.is_core_idle = Some(x),
             bindings::munch_location_bool_cpu::MUNCH_TTWU_PENDING
                 => cur_cpu.ttwu_pending = Some(x),
+        };
+        Ok(())
+    }
+
+    fn set_value_u64_group(&mut self, location: &bindings::munch_location_u64_group, sg_ptr: SchedGroupLocation, x: u64) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let sd = self.get_current_sd()?;
+        let sg = sd.get_sg(sg_ptr)?;
+
+        match location {
+            bindings::munch_location_u64_group::MUNCH_SUM_H_NR_RUNNING
+                => sg.sum_h_nr_running = Some(x),
         };
         Ok(())
     }
@@ -624,7 +648,7 @@ macro_rules! define_write {
 }
 
 macro_rules! defaultable_struct {
-    ($name:ident { $($ks:ident: $vs:ty),+ }) => {
+    ($name:ident { $($ks:ident: $vs:ty),+ $(,)? }) => {
         struct $name {
             $($ks: Option<$vs>),+
         }
@@ -672,19 +696,19 @@ defaultable_struct! {
 
 defaultable_struct! {
     LBIPerSchedGroup {
-        temp: u64
+        sum_h_nr_running: u64,
     }
 }
 
 struct LBIPerSchedDomain {
     finished: AtomicBool,
     info: LBIPerSchedDomainInfo,
-    group_ptrs: KVec<*const bindings::sched_group>,
+    group_ptrs: KVec<SchedGroupLocation>,
     groups: KVec<LBIPerSchedGroup>,
 }
 
 impl LBIPerSchedDomain {
-    fn new(group_ptrs: KVec<*const bindings::sched_group>) -> Self {
+    fn new(group_ptrs: KVec<SchedGroupLocation>) -> Self {
         let mut group_buffer = KVec::with_capacity(group_ptrs.len(), GFP_KERNEL).expect("alloc error (sched groups)");
         for _ in 0..group_ptrs.len() {
             group_buffer.push(LBIPerSchedGroup::new(), GFP_KERNEL).expect("alloc error (sched groups) (should not happen");
@@ -712,7 +736,7 @@ impl LBIPerSchedDomain {
     }
 
     #[allow(dead_code)]
-    fn get_sg(&mut self, ptr: *const bindings::sched_group) -> Result<&mut LBIPerSchedGroup, SetError> {
+    fn get_sg(&mut self, ptr: SchedGroupLocation) -> Result<&mut LBIPerSchedGroup, SetError> {
         for i in 0..self.group_ptrs.len() {
             if ptr == self.group_ptrs[i] {
                 return Ok(&mut self.groups[i]);

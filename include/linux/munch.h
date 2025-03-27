@@ -28,6 +28,10 @@ enum munch_location_bool_cpu {
 	MUNCH_TTWU_PENDING,
 };
 
+enum munch_location_u64_group {
+	MUNCH_SUM_H_NR_RUNNING,
+};
+
 struct meal_descriptor {
 	size_t age;
 	size_t cpu_number;
@@ -40,7 +44,8 @@ struct munch_ops {
 	void (*munch64) (struct meal_descriptor *, enum munch_location_u64, uint64_t);
 	void (*munch_cpu_idle_type) (struct meal_descriptor *, enum cpu_idle_type);
 	void (*munch_bool_cpu) (struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
-	void (*munch_u64_cpu) (struct meal_descriptor *, enum munch_location_u64_cpu, size_t, u64);
+	void (*munch_u64_cpu) (struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
+	void (*munch_u64_group) (struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *sg, uint64_t);
 	void (*open_meal) (size_t, struct meal_descriptor *);
 	void (*close_meal) (struct meal_descriptor *);
 
@@ -56,6 +61,7 @@ uint64_t munch_u64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
 enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle_type);
 bool munch_bool_cpu(struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
 uint64_t munch_u64_cpu(struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
+uint64_t munch_u64_group(struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *sg, uint64_t);
 void open_meal(size_t, struct meal_descriptor *);
 void close_meal(struct meal_descriptor *);
 

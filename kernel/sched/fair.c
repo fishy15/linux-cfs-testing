@@ -10341,11 +10341,13 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 static bool update_sd_pick_busiest(struct lb_env *env,
 				   struct sd_lb_stats *sds,
 				   struct sched_group *sg,
-				   struct sg_lb_stats *sgs)
+				   struct sg_lb_stats *sgs,
+				   struct meal_descriptor *md)
 {
 	struct sg_lb_stats *busiest = &sds->busiest_stat;
 
 	/* Make sure that there is at least one task to pull */
+	munch_u64_group(md, MUNCH_SUM_H_NR_RUNNING, sg, sgs->sum_h_nr_running);
 	if (!sgs->sum_h_nr_running)
 		return false;
 
@@ -10915,7 +10917,7 @@ static void update_idle_cpu_scan(struct lb_env *env,
  * @sds: variable to hold the statistics for this sched_domain.
  */
 
-static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sds)
+static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sds, struct meal_descriptor *md)
 {
 	struct sched_group *sg = env->sd->groups;
 	struct sg_lb_stats *local = &sds->local_stat;
@@ -10939,7 +10941,7 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 
 		update_sg_lb_stats(env, sds, sg, sgs, &sg_overloaded, &sg_overutilized);
 
-		if (!local_group && update_sd_pick_busiest(env, sds, sg, sgs)) {
+		if (!local_group && update_sd_pick_busiest(env, sds, sg, sgs, md)) {
 			sds->busiest = sg;
 			sds->busiest_stat = *sgs;
 		}
@@ -11185,7 +11187,7 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
  *
  * Return:	- The busiest group if imbalance exists.
  */
-static struct sched_group *sched_balance_find_src_group(struct lb_env *env)
+static struct sched_group *sched_balance_find_src_group(struct lb_env *env, struct meal_descriptor *md)
 {
 	struct sg_lb_stats *local, *busiest;
 	struct sd_lb_stats sds;
@@ -11196,7 +11198,7 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env)
 	 * Compute the various statistics relevant for load balancing at
 	 * this level.
 	 */
-	update_sd_lb_stats(env, &sds);
+	update_sd_lb_stats(env, &sds, md);
 
 	/* There is no busy sibling group to pull tasks from */
 	if (!sds.busiest)
@@ -11654,7 +11656,7 @@ redo:
 		goto out_balanced;
 	}
 
-	group = sched_balance_find_src_group(&env);
+	group = sched_balance_find_src_group(&env, md);
 	if (!group) {
 		schedstat_inc(sd->lb_nobusyg[idle]);
 		goto out_balanced;

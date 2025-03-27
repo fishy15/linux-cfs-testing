@@ -41,4 +41,5 @@
 --rustified-enum "munch_location_u64"
 --rustified-enum "munch_location_u64_cpu"
 --rustified-enum "munch_location_bool_cpu"
+--rustified-enum "munch_location_u64_group"
 --rustified-enum "cpu_idle_type"

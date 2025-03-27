@@ -48,6 +48,14 @@ uint64_t munch_u64_cpu(struct meal_descriptor *md, enum munch_location_u64_cpu l
 	return x;
 }
 
+uint64_t munch_u64_group(struct meal_descriptor *md, enum munch_location_u64_group location, const struct sched_group *sg, uint64_t x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_u64_group(md, location, sg, x);
+	}
+	return x;
+}
+
+
 void set_muncher(struct munch_ops *m) {
 	memcpy(&muncher, m, sizeof(struct munch_ops));
 	is_muncher_valid = true;
@@ -73,6 +81,7 @@ void close_meal(struct meal_descriptor *md) {
 static struct proc_dir_entry *munch_procfs; 
 
 static int show_munch(struct seq_file *m, size_t entry_index) {
+	pr_info("munch: printing index %ld\n", entry_index);
 	if (is_muncher_valid) {
 		size_t cpu = GET_CPU(m);
 		return muncher.dump_data(m, cpu, entry_index);
