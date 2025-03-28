@@ -11236,15 +11236,19 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env, stru
 	update_sd_lb_stats(env, &sds, md);
 
 	/* There is no busy sibling group to pull tasks from */
+	munch_bool(md, MUNCH_HAS_BUSIEST, sds.busiest != NULL);
 	if (!sds.busiest)
 		goto out_balanced;
 
 	busiest = &sds.busiest_stat;
 
 	/* Misfit tasks should be dealt with regardless of the avg load */
+	// TODO: munch group type
 	if (busiest->group_type == group_misfit_task)
 		goto force_balance;
 
+	munch_bool_cpu(md, MUNCH_RD_OVERUTILIZED, env->dst_cpu, is_rd_overutilized(env->dst_rq->rd));
+	munch_bool_cpu(md, MUNCH_RD_PD_OVERLAP, env->dst_cpu, rcu_dereference(env->dst_rq->rd->pd) != NULL);
 	if (!is_rd_overutilized(env->dst_rq->rd) &&
 	    rcu_dereference(env->dst_rq->rd->pd))
 		goto out_balanced;
@@ -11266,6 +11270,7 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env, stru
 	 * If the local group is busier than the selected busiest group
 	 * don't try and pull any tasks.
 	 */
+	// TODO: munch local group type
 	if (local->group_type > busiest->group_type)
 		goto out_balanced;
 
@@ -11278,6 +11283,8 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env, stru
 		 * If the local group is more loaded than the selected
 		 * busiest group don't try to pull any tasks.
 		 */
+		munch_u64_group(md, MUNCH_SG_AVG_LOAD, sds.local, local->avg_load);
+		munch_u64_group(md, MUNCH_SG_AVG_LOAD, sds.busiest, busiest->avg_load);
 		if (local->avg_load >= busiest->avg_load)
 			goto out_balanced;
 
@@ -11289,6 +11296,7 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env, stru
 		 * Don't pull any tasks if this group is already above the
 		 * domain average load.
 		 */
+		munch_u64(md, MUNCH_SD_AVG_LOAD, sds.avg_load);
 		if (local->avg_load >= sds.avg_load)
 			goto out_balanced;
 
@@ -11296,6 +11304,7 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env, stru
 		 * If the busiest group is more loaded, use imbalance_pct to be
 		 * conservative.
 		 */
+		munch_u64(md, MUNCH_IMBALANCE_PCT, env->sd->imbalance_pct);
 		if (100 * busiest->avg_load <=
 				env->sd->imbalance_pct * local->avg_load)
 			goto out_balanced;
@@ -11645,7 +11654,7 @@ static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 		return idle_smt == env->dst_cpu;
 
 	/* Are we the first CPU of this group ? */
-	munch_u64(md, MUNCH_GROUP_BALANCE_CPU_SG, group_balance_cpu(sg));
+	munch_u64_group(md, MUNCH_GROUP_BALANCE_CPU, sg, group_balance_cpu(sg));
 	return group_balance_cpu(sg) == env->dst_cpu;
 }
 

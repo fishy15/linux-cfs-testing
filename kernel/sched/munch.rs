@@ -630,6 +630,8 @@ impl LoadBalanceInfo {
                 => sd.should_we_balance = Some(x),
             bindings::munch_location_bool::MUNCH_ASYM_CPUCAPACITY
                 => sd.asym_cpucapacity = Some(x),
+            bindings::munch_location_bool::MUNCH_HAS_BUSIEST
+                => sd.has_busiest = Some(x),
         };
         Ok(())
     }
@@ -643,8 +645,10 @@ impl LoadBalanceInfo {
         match location {
             bindings::munch_location_u64::MUNCH_CPU_NUMBER
                 => self.get_current_sd()?.cpu = Some(x),
-            bindings::munch_location_u64::MUNCH_GROUP_BALANCE_CPU_SG
-                => self.get_current_sd()?.group_balance_cpu_sg = Some(x),
+            bindings::munch_location_u64::MUNCH_SD_AVG_LOAD
+                => self.get_current_sd()?.avg_load = Some(x),
+            bindings::munch_location_u64::MUNCH_IMBALANCE_PCT
+                => self.get_current_sd()?.imbalance_pct = Some(x),
         };
         Ok(())
     }
@@ -704,6 +708,10 @@ impl LoadBalanceInfo {
                 => cur_cpu.is_core_idle = Some(x),
             bindings::munch_location_bool_cpu::MUNCH_TTWU_PENDING
                 => cur_cpu.ttwu_pending = Some(x),
+            bindings::munch_location_bool_cpu::MUNCH_RD_OVERUTILIZED
+                => cur_cpu.rd_overutilized = Some(x),
+            bindings::munch_location_bool_cpu::MUNCH_RD_PD_OVERLAP
+                => cur_cpu.rd_pd_overlap = Some(x),
         };
         Ok(())
     }
@@ -734,6 +742,8 @@ impl LoadBalanceInfo {
                 => sg.misfit_task_load = Some(x),
             bindings::munch_location_u64_group::MUNCH_SG_IDLE_CPUS
                 => sg.idle_cpus = Some(x),
+            bindings::munch_location_u64_group::MUNCH_GROUP_BALANCE_CPU
+                => sg.group_balance_cpu = Some(x),
         };
         Ok(())
     }
@@ -872,6 +882,8 @@ defaultable_struct! {
         ttwu_pending: bool,
         capacity: u64,
         asym_cpu_priority: u64,
+        rd_overutilized: bool,
+        rd_pd_overlap: bool,
     }
 }
 
@@ -883,6 +895,9 @@ defaultable_struct! {
         asym_cpucapacity: bool,
         share_cpucapacity: bool,
         should_we_balance: bool,
+        has_busiest: bool,
+        avg_load: u64,
+        imbalance_pct: u64,
     }
 }
 
@@ -896,6 +911,7 @@ defaultable_struct! {
         asym_prefer_cpu: u64,
         misfit_task_load: u64,
         idle_cpus: u64,
+        group_balance_cpu: u64,
     }
 }
 
