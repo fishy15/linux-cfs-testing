@@ -10410,8 +10410,8 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 		 * If we have more than one misfit sg go with the biggest
 		 * misfit.
 		 */
-		munch_u64_group(md, MUNCH_MISFIT_TASK_LOAD, sg, sgs->group_misfit_task_load);
-		munch_u64_group(md, MUNCH_MISFIT_TASK_LOAD, sds->busiest, busiest->group_misfit_task_load);
+		munch_u64_group(md, MUNCH_MISFIT_TASK_LOAD_SG, sg, sgs->group_misfit_task_load);
+		munch_u64_group(md, MUNCH_MISFIT_TASK_LOAD_SG, sds->busiest, busiest->group_misfit_task_load);
 		return sgs->group_misfit_task_load > busiest->group_misfit_task_load;
 
 	case group_smt_balance:
@@ -11011,6 +11011,7 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 		set_rd_overutilized(env->dst_rq->rd, sg_overutilized);
 	}
 
+	// TODO: look here
 	update_idle_cpu_scan(env, sum_util);
 }
 
@@ -11370,7 +11371,8 @@ out_balanced:
  * sched_balance_find_src_rq - find the busiest runqueue among the CPUs in the group.
  */
 static struct rq *sched_balance_find_src_rq(struct lb_env *env,
-				     struct sched_group *group)
+				     struct sched_group *group,
+				     struct meal_descriptor *md)
 {
 	struct rq *busiest = NULL, *rq;
 	unsigned long busiest_util = 0, busiest_load = 0, busiest_capacity = 1;
@@ -11404,10 +11406,12 @@ static struct rq *sched_balance_find_src_rq(struct lb_env *env,
 		 *
 		 * Both cases only affect the total convergence complexity.
 		 */
+		// TODO: munch fbq type, both
 		if (rt > env->fbq_type)
 			continue;
 
 		nr_running = rq->cfs.h_nr_running;
+		munch_u64_cpu(md, MUNCH_H_NR_RUNNING, i, nr_running);
 		if (!nr_running)
 			continue;
 
@@ -11419,6 +11423,9 @@ static struct rq *sched_balance_find_src_rq(struct lb_env *env,
 		 * Higher per-CPU capacity is considered better than balancing
 		 * average load.
 		 */
+		munch_bool(md, MUNCH_ASYM_CPUCAPACITY, (env->sd->flags & SD_ASYM_CPUCAPACITY) != 0);
+		munch_u64_cpu(md, MUNCH_CPU_CAPACITY, env->dst_cpu, capacity_of(env->dst_cpu));
+		munch_u64_cpu(md, MUNCH_CPU_CAPACITY, i, capacity);
 		if (env->sd->flags & SD_ASYM_CPUCAPACITY &&
 		    !capacity_greater(capacity_of(env->dst_cpu), capacity) &&
 		    nr_running == 1)
@@ -11431,9 +11438,17 @@ static struct rq *sched_balance_find_src_rq(struct lb_env *env,
 		 * If balancing between cores, let lower priority CPUs help
 		 * SMT cores with more than one busy sibling.
 		 */
+		// all accessed in the sched_asym call
+		munch_bool(md, MUNCH_ASYM_PACKING, (env->sd->flags & SD_ASYM_PACKING) != 0);
+		munch_bool(md, MUNCH_SMT_ACTIVE, sched_smt_active());
+		munch_bool(md, MUNCH_ASYM_CPUCAPACITY, (env->sd->flags & SD_ASYM_CPUCAPACITY) != 0);
+		munch_bool_cpu(md, MUNCH_IS_CORE_IDLE, env->dst_cpu, is_core_idle(env->dst_cpu));
+		munch_u64_cpu(md, MUNCH_ASYM_CPU_PRIORITY_VALUE, env->src_cpu, arch_asym_cpu_priority(env->src_cpu));
+		munch_u64_cpu(md, MUNCH_ASYM_CPU_PRIORITY_VALUE, env->dst_cpu, arch_asym_cpu_priority(env->dst_cpu));
 		if (sched_asym(env->sd, i, env->dst_cpu) && nr_running == 1)
 			continue;
 
+		// TODO: munch migration type
 		switch (env->migration_type) {
 		case migrate_load:
 			/*
@@ -11442,6 +11457,11 @@ static struct rq *sched_balance_find_src_rq(struct lb_env *env,
 			 */
 			load = cpu_load(rq);
 
+			munch_u64_cpu(md, MUNCH_CPU_LOAD, i, load);
+			munch_u64(md, MUNCH_IMBALANCE, env->imbalance);
+			// in check_cpu_capacity
+			munch_u64_cpu(md, MUNCH_CPU_CAPACITY, i, rq->cpu_capacity);
+			munch_u64_cpu(md, MUNCH_ARCH_SCALE_CPU_CAPACITY, i, arch_scale_cpu_capacity(cpu_of(rq)));
 			if (nr_running == 1 && load > env->imbalance &&
 			    !check_cpu_capacity(rq, env->sd))
 				break;
@@ -11476,7 +11496,8 @@ static struct rq *sched_balance_find_src_rq(struct lb_env *env,
 			 */
 			if (nr_running <= 1)
 				continue;
-
+			
+			munch_u64_cpu(md, MUNCH_CPU_UTIL_CFS_BOOST, i, util);
 			if (busiest_util < util) {
 				busiest_util = util;
 				busiest = rq;
@@ -11495,6 +11516,7 @@ static struct rq *sched_balance_find_src_rq(struct lb_env *env,
 			 * For ASYM_CPUCAPACITY domains with misfit tasks we
 			 * simply seek the "biggest" misfit task.
 			 */
+			munch_u64_cpu(md, MUNCH_MISFIT_TASK_LOAD, i, rq->misfit_task_load);
 			if (rq->misfit_task_load > busiest_load) {
 				busiest_load = rq->misfit_task_load;
 				busiest = rq;
@@ -11704,7 +11726,7 @@ redo:
 		goto out_balanced;
 	}
 
-	busiest = sched_balance_find_src_rq(&env, group);
+	busiest = sched_balance_find_src_rq(&env, group, md);
 	if (!busiest) {
 		schedstat_inc(sd->lb_nobusyq[idle]);
 		goto out_balanced;

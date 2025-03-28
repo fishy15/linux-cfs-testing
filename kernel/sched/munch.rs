@@ -630,8 +630,12 @@ impl LoadBalanceInfo {
                 => sd.should_we_balance = Some(x),
             bindings::munch_location_bool::MUNCH_ASYM_CPUCAPACITY
                 => sd.asym_cpucapacity = Some(x),
+            bindings::munch_location_bool::MUNCH_ASYM_PACKING
+                => sd.asym_packing = Some(x),
             bindings::munch_location_bool::MUNCH_HAS_BUSIEST
                 => sd.has_busiest = Some(x),
+            bindings::munch_location_bool::MUNCH_SMT_ACTIVE
+                => sd.smt_active = Some(x),
         };
         Ok(())
     }
@@ -649,6 +653,8 @@ impl LoadBalanceInfo {
                 => self.get_current_sd()?.avg_load = Some(x),
             bindings::munch_location_u64::MUNCH_IMBALANCE_PCT
                 => self.get_current_sd()?.imbalance_pct = Some(x),
+            bindings::munch_location_u64::MUNCH_IMBALANCE
+                => self.get_current_sd()?.imbalance = Some(x),
         };
         Ok(())
     }
@@ -683,13 +689,25 @@ impl LoadBalanceInfo {
             panic!("trying to write when entry has finished");
         }
 
+        let cur_cpu = self.get_cpu(cpu)?;
+
         match location {
             bindings::munch_location_u64_cpu::MUNCH_NR_RUNNING
-                => self.get_cpu(cpu)?.nr_running = Some(x),
+                => cur_cpu.nr_running = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_H_NR_RUNNING
+                => cur_cpu.h_nr_running = Some(x),
             bindings::munch_location_u64_cpu::MUNCH_CPU_CAPACITY
-                => self.get_cpu(cpu)?.capacity = Some(x),
+                => cur_cpu.capacity = Some(x),
             bindings::munch_location_u64_cpu::MUNCH_ASYM_CPU_PRIORITY_VALUE
-                => self.get_cpu(cpu)?.asym_cpu_priority = Some(x),
+                => cur_cpu.asym_cpu_priority = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_ARCH_SCALE_CPU_CAPACITY
+                => cur_cpu.arch_scale_cpu_capacity = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_CPU_LOAD
+                => cur_cpu.cpu_load = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_CPU_UTIL_CFS_BOOST
+                => cur_cpu.cpu_util_cfs_boost = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_MISFIT_TASK_LOAD
+                => cur_cpu.misfit_task_load = Some(x),
         };
         Ok(())
     }
@@ -738,7 +756,7 @@ impl LoadBalanceInfo {
                 => sg.avg_load = Some(x),
             bindings::munch_location_u64_group::MUNCH_SG_ASYM_PREFER_CPU
                 => sg.asym_prefer_cpu = Some(x),
-            bindings::munch_location_u64_group::MUNCH_MISFIT_TASK_LOAD
+            bindings::munch_location_u64_group::MUNCH_MISFIT_TASK_LOAD_SG
                 => sg.misfit_task_load = Some(x),
             bindings::munch_location_u64_group::MUNCH_SG_IDLE_CPUS
                 => sg.idle_cpus = Some(x),
@@ -879,11 +897,16 @@ defaultable_struct! {
         idle_cpu: bool,
         is_core_idle: bool,
         nr_running: u64,
+        h_nr_running: u64,
         ttwu_pending: bool,
         capacity: u64,
         asym_cpu_priority: u64,
         rd_overutilized: bool,
         rd_pd_overlap: bool,
+        arch_scale_cpu_capacity: u64,
+        cpu_load: u64,
+        cpu_util_cfs_boost: u64,
+        misfit_task_load: u64,
     }
 }
 
@@ -893,11 +916,14 @@ defaultable_struct! {
         cpu_idle_type: bindings::cpu_idle_type,
         group_balance_cpu_sg: u64,
         asym_cpucapacity: bool,
+        asym_packing: bool,
         share_cpucapacity: bool,
         should_we_balance: bool,
         has_busiest: bool,
         avg_load: u64,
         imbalance_pct: u64,
+        smt_active: bool,
+        imbalance: u64,
     }
 }
 
