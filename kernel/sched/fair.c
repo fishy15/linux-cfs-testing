@@ -10964,6 +10964,7 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 		struct sg_lb_stats *sgs = &tmp_sgs;
 		int local_group;
 
+		munch_cpumask_group(md, sg, sched_group_span(sg));
 		local_group = cpumask_test_cpu(env->dst_cpu, sched_group_span(sg));
 		if (local_group) {
 			sds->local = sg;
@@ -11707,6 +11708,7 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 	};
         
 	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
+	munch_cpumask(md, cpus);
 
 	schedstat_inc(sd->lb_count[idle]);
 

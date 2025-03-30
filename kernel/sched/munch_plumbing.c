@@ -34,6 +34,13 @@ enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *md, enum cpu_idle
 	return x;
 }
 
+const struct cpumask *munch_cpumask(struct meal_descriptor *md, const struct cpumask *x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_cpumask(md, x);
+	}
+	return x;
+}
+
 bool munch_bool_cpu(struct meal_descriptor *md, enum munch_location_bool_cpu location, size_t cpu, bool x) {
 	if (is_muncher_valid && md != NULL) {
 		muncher.munch_bool_cpu(md, location, cpu, x);
@@ -55,6 +62,12 @@ uint64_t munch_u64_group(struct meal_descriptor *md, enum munch_location_u64_gro
 	return x;
 }
 
+const struct cpumask *munch_cpumask_group(struct meal_descriptor *md, const struct sched_group *sg, const struct cpumask *x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_cpumask_group(md, sg, x);
+	}
+	return x;
+}
 
 void set_muncher(struct munch_ops *m) {
 	memcpy(&muncher, m, sizeof(struct munch_ops));

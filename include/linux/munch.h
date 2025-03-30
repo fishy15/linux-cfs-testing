@@ -75,9 +75,11 @@ struct munch_ops {
 	void (*munch_bool) (struct meal_descriptor *, enum munch_location_bool, bool);
 	void (*munch64) (struct meal_descriptor *, enum munch_location_u64, uint64_t);
 	void (*munch_cpu_idle_type) (struct meal_descriptor *, enum cpu_idle_type);
+	void (*munch_cpumask) (struct meal_descriptor *, const struct cpumask *);
 	void (*munch_bool_cpu) (struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
 	void (*munch_u64_cpu) (struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
 	void (*munch_u64_group) (struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *sg, uint64_t);
+	void (*munch_cpumask_group) (struct meal_descriptor *, const struct sched_group *, const struct cpumask *);
 	void (*open_meal) (size_t, struct meal_descriptor *);
 	void (*close_meal) (struct meal_descriptor *);
 
@@ -92,9 +94,11 @@ void munch_flag(struct meal_descriptor *, enum munch_flag);
 bool munch_bool(struct meal_descriptor *, enum munch_location_bool, bool);
 uint64_t munch_u64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
 enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *, enum cpu_idle_type);
+const struct cpumask *munch_cpumask(struct meal_descriptor *, const struct cpumask *);
 bool munch_bool_cpu(struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
 uint64_t munch_u64_cpu(struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
-uint64_t munch_u64_group(struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *sg, uint64_t);
+uint64_t munch_u64_group(struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *, uint64_t);
+const struct cpumask *munch_cpumask_group(struct meal_descriptor *, const struct sched_group *, const struct cpumask *);
 void open_meal(size_t, struct meal_descriptor *);
 void close_meal(struct meal_descriptor *);
 

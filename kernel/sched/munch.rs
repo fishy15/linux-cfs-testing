@@ -425,6 +425,12 @@ impl MunchOps for RustMunch {
         }
     }
 
+    fn munch_cpumask(md: &bindings::meal_descriptor, cpumask: &bindings::cpumask) {
+        if let Err(e) = get_current(md).map(|e| e.set_cpumask(cpumask)) {
+            e.print_error();
+        }
+    }
+
     fn munch_u64_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64) {
         if let Err(e) = get_current(md).map(|e| e.set_value_u64_cpu(&location, cpu, x)) {
             e.print_error();
@@ -439,6 +445,12 @@ impl MunchOps for RustMunch {
 
     fn munch_u64_group(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_group, sg: SchedGroupLocation, x: u64) {
         if let Err(e) = get_current(md).map(|e| e.set_value_u64_group(&location, sg, x)) {
+            e.print_error();
+        }
+    }
+
+    fn munch_cpumask_group(md: &bindings::meal_descriptor, sg: SchedGroupLocation, cpumask: &bindings::cpumask) {
+        if let Err(e) = get_current(md).map(|e| e.set_cpumask_group(sg, cpumask)) {
             e.print_error();
         }
     }
@@ -683,6 +695,17 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
+    fn set_cpumask(&mut self, mask: &bindings::cpumask) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let sd = self.get_current_sd()?;
+        sd.cpumask = Some(mask.clone());
+        Ok(())
+    }
+
     fn set_value_u64_cpu(&mut self, location: &bindings::munch_location_u64_cpu, cpu: usize, x: u64) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
@@ -763,6 +786,18 @@ impl LoadBalanceInfo {
             bindings::munch_location_u64_group::MUNCH_GROUP_BALANCE_CPU
                 => sg.group_balance_cpu = Some(x),
         };
+        Ok(())
+    }
+
+    fn set_cpumask_group(&mut self, sg_ptr: SchedGroupLocation, cpumask: &bindings::cpumask) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let sd = self.get_current_sd()?;
+        let sg = sd.get_sg(sg_ptr)?;
+        sg.cpumask = Some(cpumask.clone()); 
         Ok(())
     }
 
@@ -913,6 +948,7 @@ defaultable_struct! {
 defaultable_struct! {
     LBIPerSchedDomainInfo {
         cpu: u64,
+        cpumask: bindings::cpumask,
         cpu_idle_type: bindings::cpu_idle_type,
         group_balance_cpu_sg: u64,
         asym_cpucapacity: bool,
@@ -929,6 +965,7 @@ defaultable_struct! {
 
 defaultable_struct! {
     LBIPerSchedGroup {
+        cpumask: bindings::cpumask,
         sum_h_nr_running: u64,
         sum_nr_running: u64,
         max_capacity: u64,
@@ -1179,6 +1216,31 @@ impl SeqFileWrite for LBIPerSchedDomain {
         } else {
             seq_file.write("null")
         }
+    }
+}
+
+impl SeqFileWrite for bindings::cpumask {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        seq_file.write("\"")?;
+        let mut cpus_done = 0;
+        let cpu_count = nr_cpus();
+        self.bits.iter().try_for_each(|num: &u64| {
+            let num_bits = u64::BITS;
+            for i in 0..num_bits {
+                if cpus_done < cpu_count {
+                    let bit = (num >> i) & 1;
+                    if bit == 0 {
+                        seq_file.write("0")?;
+                    } else {
+                        seq_file.write("1")?;
+                    }
+                    cpus_done += 1;
+                }
+            }
+            Ok(())
+        })?;
+        seq_file.write("\"")?;
+        Ok(())
     }
 }
 
