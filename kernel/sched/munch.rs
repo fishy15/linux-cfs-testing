@@ -455,6 +455,12 @@ impl MunchOps for RustMunch {
         }
     }
 
+    fn munch_group_type_group(md: &bindings::meal_descriptor, sg: SchedGroupLocation, group_type: bindings::group_type) {
+        if let Err(e) = get_current(md).map(|e| e.set_group_type_group(sg, group_type)) {
+            e.print_error();
+        }
+    }
+
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor {
         let maybe_bufs = unsafe { &mut RUST_MUNCH_STATE.bufs };
         if let Some(bufs) = maybe_bufs {
@@ -801,6 +807,19 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
+    fn set_group_type_group(&mut self, sg_ptr: SchedGroupLocation, group_type: bindings::group_type) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let sd = self.get_current_sd()?;
+        let sg = sd.get_sg(sg_ptr)?;
+        sg.group_type = Some(group_type); 
+        Ok(())
+    }
+
+
     fn get_current_sd(&mut self) -> Result<&mut LBIPerSchedDomain, SetError> {
         let idx = self.current_sd;
         self.per_sd_info.get_mut(idx).ok_or(SetError::SDOutOfBounds(idx))
@@ -966,6 +985,7 @@ defaultable_struct! {
 defaultable_struct! {
     LBIPerSchedGroup {
         cpumask: bindings::cpumask,
+        group_type: bindings::group_type,
         sum_h_nr_running: u64,
         sum_nr_running: u64,
         max_capacity: u64,
@@ -1181,6 +1201,21 @@ impl SeqFileWrite for bindings::cpu_idle_type {
         }
     }
 }
+
+impl SeqFileWrite for bindings::group_type {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        match self {
+            bindings::group_type::group_has_spare => seq_file.write("\"group_has_spare\""),
+            bindings::group_type::group_fully_busy => seq_file.write("\"group_fully_busy\""),
+            bindings::group_type::group_misfit_task => seq_file.write("\"group_misfit_task\""),
+            bindings::group_type::group_smt_balance => seq_file.write("\"group_smt_balance\""),
+            bindings::group_type::group_asym_packing => seq_file.write("\"group_asym_packing\""),
+            bindings::group_type::group_imbalanced => seq_file.write("\"group_imbalanced\""),
+            bindings::group_type::group_overloaded => seq_file.write("\"group_overloaded\""),
+        }
+    }
+}
+
 
 impl SeqFileWrite for RingBuffer {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {

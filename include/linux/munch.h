@@ -3,6 +3,7 @@
 
 #include "sched/idle.h"
 #include <linux/sched/idle.h>
+#include <linux/sched/fair_enums.h>
 
 // flag enum
 enum munch_flag {
@@ -78,8 +79,9 @@ struct munch_ops {
 	void (*munch_cpumask) (struct meal_descriptor *, const struct cpumask *);
 	void (*munch_bool_cpu) (struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
 	void (*munch_u64_cpu) (struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
-	void (*munch_u64_group) (struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *sg, uint64_t);
+	void (*munch_u64_group) (struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *, uint64_t);
 	void (*munch_cpumask_group) (struct meal_descriptor *, const struct sched_group *, const struct cpumask *);
+	void (*munch_group_type_group) (struct meal_descriptor *, const struct sched_group *, enum group_type);
 	void (*open_meal) (size_t, struct meal_descriptor *);
 	void (*close_meal) (struct meal_descriptor *);
 
@@ -99,6 +101,7 @@ bool munch_bool_cpu(struct meal_descriptor *, enum munch_location_bool_cpu, size
 uint64_t munch_u64_cpu(struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
 uint64_t munch_u64_group(struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *, uint64_t);
 const struct cpumask *munch_cpumask_group(struct meal_descriptor *, const struct sched_group *, const struct cpumask *);
+enum group_type munch_group_type_group(struct meal_descriptor *, const struct sched_group *, enum group_type);
 void open_meal(size_t, struct meal_descriptor *);
 void close_meal(struct meal_descriptor *);
 

@@ -69,6 +69,13 @@ const struct cpumask *munch_cpumask_group(struct meal_descriptor *md, const stru
 	return x;
 }
 
+enum group_type munch_group_type_group(struct meal_descriptor *md, const struct sched_group *sg, enum group_type x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_group_type_group(md, sg, x);
+	}
+	return x;
+}
+
 void set_muncher(struct munch_ops *m) {
 	memcpy(&muncher, m, sizeof(struct munch_ops));
 	is_muncher_valid = true;

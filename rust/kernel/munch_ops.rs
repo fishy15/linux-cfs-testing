@@ -31,6 +31,8 @@ pub trait MunchOps: Sized {
     fn munch_u64_group(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_group, sg: SchedGroupLocation, x: u64);
     /// munch a cpumask (per group)
     fn munch_cpumask_group(md: &bindings::meal_descriptor, sg: SchedGroupLocation, x: &bindings::cpumask);
+    /// munch a group_type (per group)
+    fn munch_group_type_group(md: &bindings::meal_descriptor, sg: SchedGroupLocation, x: bindings::group_type);
     /// open a meal
     fn open_meal(cpu_number: usize) -> bindings::meal_descriptor;
     /// close a meal
@@ -107,6 +109,12 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         }
     }
 
+    unsafe extern "C" fn munch_group_type_group_c(md: *mut bindings::meal_descriptor, sg: SchedGroupLocation, x: bindings::group_type) {
+        unsafe {
+            T::munch_group_type_group(&*md, sg, x)
+        }
+    }
+
     unsafe extern "C" fn open_meal_c(cpu_number: usize, md: *mut bindings::meal_descriptor) {
         let md_ = T::open_meal(cpu_number);
         unsafe {
@@ -154,6 +162,7 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         munch_bool_cpu: Some(Self::munch_bool_cpu_c),
         munch_u64_group: Some(Self::munch_u64_group_c),
         munch_cpumask_group: Some(Self::munch_cpumask_group_c),
+        munch_group_type_group: Some(Self::munch_group_type_group_c),
         open_meal: Some(Self::open_meal_c),
         close_meal: Some(Self::close_meal_c),
         start_dump: Some(Self::start_dump_c),

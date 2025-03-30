@@ -56,6 +56,7 @@
 #include "autogroup.h"
 
 #include <linux/munch.h>
+#include <linux/sched/fair_enums.h>
 
 /*
  * The initial- and re-scaling of tunables is configurable
@@ -9109,49 +9110,6 @@ static unsigned long __read_mostly max_load_balance_interval = HZ/10;
 
 enum fbq_type { regular, remote, all };
 
-/*
- * 'group_type' describes the group of CPUs at the moment of load balancing.
- *
- * The enum is ordered by pulling priority, with the group with lowest priority
- * first so the group_type can simply be compared when selecting the busiest
- * group. See update_sd_pick_busiest().
- */
-enum group_type {
-	/* The group has spare capacity that can be used to run more tasks.  */
-	group_has_spare = 0,
-	/*
-	 * The group is fully used and the tasks don't compete for more CPU
-	 * cycles. Nevertheless, some tasks might wait before running.
-	 */
-	group_fully_busy,
-	/*
-	 * One task doesn't fit with CPU's capacity and must be migrated to a
-	 * more powerful CPU.
-	 */
-	group_misfit_task,
-	/*
-	 * Balance SMT group that's fully busy. Can benefit from migration
-	 * a task on SMT with busy sibling to another CPU on idle core.
-	 */
-	group_smt_balance,
-	/*
-	 * SD_ASYM_PACKING only: One local CPU with higher capacity is available,
-	 * and the task should be migrated to it instead of running on the
-	 * current CPU.
-	 */
-	group_asym_packing,
-	/*
-	 * The tasks' affinity constraints previously prevented the scheduler
-	 * from balancing the load across the system.
-	 */
-	group_imbalanced,
-	/*
-	 * The CPU is overloaded and can't provide expected CPU cycles to all
-	 * tasks.
-	 */
-	group_overloaded
-};
-
 enum migration_type {
 	migrate_load = 0,
 	migrate_util,
@@ -10358,10 +10316,10 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 	 * internally or be covered by avg_load imbalance (eventually).
 	 */
 	munch_bool(md, MUNCH_ASYM_CPUCAPACITY, (env->sd->flags & SD_ASYM_CPUCAPACITY) != 0);
-	// TODO: munch group type
+	munch_group_type_group(md, sg, sgs->group_type);
 	munch_u64_cpu(md, MUNCH_CPU_CAPACITY, env->dst_cpu, capacity_of(env->dst_cpu));
 	munch_u64_group(md, MUNCH_SGC_MAX_CAPACITY, sg, sg->sgc->max_capacity);	
-	// TODO: munch local type
+	munch_group_type_group(md, sds->local, sds->local_stat.group_type);
 	if ((env->sd->flags & SD_ASYM_CPUCAPACITY) &&
 	    (sgs->group_type == group_misfit_task) &&
 	    (!capacity_greater(capacity_of(env->dst_cpu), sg->sgc->max_capacity) ||
@@ -10502,7 +10460,7 @@ has_spare:
 	 * considered.
 	 */
 	munch_bool(md, MUNCH_ASYM_CPUCAPACITY, (env->sd->flags & SD_ASYM_CPUCAPACITY) != 0);
-	// TODO: munch group type
+	munch_group_type_group(md, sg, sgs->group_type);
 	munch_u64_group(md, MUNCH_SGC_MIN_CAPACITY, sg, sg->sgc->min_capacity);	
 	munch_u64_cpu(md, MUNCH_CPU_CAPACITY, env->dst_cpu, capacity_of(env->dst_cpu));
 	if ((env->sd->flags & SD_ASYM_CPUCAPACITY) &&
@@ -11245,7 +11203,7 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env, stru
 	busiest = &sds.busiest_stat;
 
 	/* Misfit tasks should be dealt with regardless of the avg load */
-	// TODO: munch group type
+	munch_group_type_group(md, sds.busiest, busiest->group_type);
 	if (busiest->group_type == group_misfit_task)
 		goto force_balance;
 
@@ -11272,7 +11230,7 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env, stru
 	 * If the local group is busier than the selected busiest group
 	 * don't try and pull any tasks.
 	 */
-	// TODO: munch local group type
+	munch_group_type_group(md, sds.local, local->group_type);
 	if (local->group_type > busiest->group_type)
 		goto out_balanced;
 
@@ -11608,8 +11566,6 @@ static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 	struct cpumask *swb_cpus = this_cpu_cpumask_var_ptr(should_we_balance_tmpmask);
 	struct sched_group *sg = env->sd->groups;
 	int cpu, idle_smt = -1;
-
-	// TODO: munch_cpumask(md, swb_cpus);
 
 	/*
 	 * Ensure the balancing environment is consistent; can happen
