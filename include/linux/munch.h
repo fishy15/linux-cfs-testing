@@ -24,6 +24,7 @@ enum munch_location_u64 {
 	MUNCH_SD_AVG_LOAD,
 	MUNCH_IMBALANCE_PCT,
 	MUNCH_IMBALANCE,
+	MUNCH_SPAN_WEIGHT,
 };
 
 enum munch_location_u64_cpu {
@@ -35,6 +36,8 @@ enum munch_location_u64_cpu {
 	MUNCH_CPU_LOAD,
 	MUNCH_CPU_UTIL_CFS_BOOST,
 	MUNCH_MISFIT_TASK_LOAD,
+	MUNCH_LLC_WEIGHT,
+	MUNCH_NR_IDLE_SCAN,
 };
 
 enum munch_location_bool_cpu {
@@ -43,6 +46,7 @@ enum munch_location_bool_cpu {
 	MUNCH_TTWU_PENDING,
 	MUNCH_RD_OVERUTILIZED,
 	MUNCH_RD_PD_OVERLAP,
+	MUNCH_HAS_SD_SHARE,
 };
 
 enum munch_location_u64_group {

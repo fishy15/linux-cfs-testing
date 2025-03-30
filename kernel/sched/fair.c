@@ -10825,7 +10825,8 @@ sched_balance_find_dst_group(struct sched_domain *sd, struct task_struct *p, int
 }
 
 static void update_idle_cpu_scan(struct lb_env *env,
-				 unsigned long sum_util)
+				 unsigned long sum_util,
+				 struct meal_descriptor *md)
 {
 	struct sched_domain_shared *sd_share;
 	int llc_weight, pct;
@@ -10838,14 +10839,18 @@ static void update_idle_cpu_scan(struct lb_env *env,
 	 * balancing, rather than CPU_NEWLY_IDLE, because the latter
 	 * can fire way more frequently than the former.
 	 */
+	munch_cpu_idle_type(md, env->idle);
 	if (!sched_feat(SIS_UTIL) || env->idle == CPU_NEWLY_IDLE)
 		return;
 
 	llc_weight = per_cpu(sd_llc_size, env->dst_cpu);
+	munch_u64(md, MUNCH_SPAN_WEIGHT, env->sd->span_weight);
+	munch_u64_cpu(md, MUNCH_LLC_WEIGHT, env->dst_cpu, llc_weight);
 	if (env->sd->span_weight != llc_weight)
 		return;
 
 	sd_share = rcu_dereference(per_cpu(sd_llc_shared, env->dst_cpu));
+	munch_bool_cpu(md, MUNCH_HAS_SD_SHARE, env->dst_cpu, sd_share != NULL);
 	if (!sd_share)
 		return;
 
@@ -10882,6 +10887,7 @@ static void update_idle_cpu_scan(struct lb_env *env,
 	do_div(x, llc_weight);
 
 	/* equation [4] */
+	munch_u64(md, MUNCH_IMBALANCE_PCT, env->sd->imbalance_pct);
 	pct = env->sd->imbalance_pct;
 	tmp = x * x * pct * pct;
 	do_div(tmp, 10000 * SCHED_CAPACITY_SCALE);
@@ -10893,6 +10899,7 @@ static void update_idle_cpu_scan(struct lb_env *env,
 	do_div(y, SCHED_CAPACITY_SCALE);
 	if ((int)y != sd_share->nr_idle_scan)
 		WRITE_ONCE(sd_share->nr_idle_scan, (int)y);
+	munch_u64_cpu(md, MUNCH_NR_IDLE_SCAN, env->dst_cpu, sd_share->nr_idle_scan);
 }
 
 /**
@@ -10961,8 +10968,7 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 		set_rd_overutilized(env->dst_rq->rd, sg_overutilized);
 	}
 
-	// TODO: look here
-	update_idle_cpu_scan(env, sum_util);
+	update_idle_cpu_scan(env, sum_util, md);
 }
 
 /**

@@ -691,6 +691,8 @@ impl LoadBalanceInfo {
                 => self.get_current_sd()?.imbalance_pct = Some(x),
             bindings::munch_location_u64::MUNCH_IMBALANCE
                 => self.get_current_sd()?.imbalance = Some(x),
+            bindings::munch_location_u64::MUNCH_SPAN_WEIGHT
+                => self.get_current_sd()?.span_weight = Some(x),
         };
         Ok(())
     }
@@ -776,6 +778,10 @@ impl LoadBalanceInfo {
                 => cur_cpu.cpu_util_cfs_boost = Some(x),
             bindings::munch_location_u64_cpu::MUNCH_MISFIT_TASK_LOAD
                 => cur_cpu.misfit_task_load = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_LLC_WEIGHT
+                => cur_cpu.llc_weight = Some(x),
+            bindings::munch_location_u64_cpu::MUNCH_NR_IDLE_SCAN
+                => cur_cpu.nr_idle_scan = Some(x),
         };
         Ok(())
     }
@@ -798,6 +804,8 @@ impl LoadBalanceInfo {
                 => cur_cpu.rd_overutilized = Some(x),
             bindings::munch_location_bool_cpu::MUNCH_RD_PD_OVERLAP
                 => cur_cpu.rd_pd_overlap = Some(x),
+            bindings::munch_location_bool_cpu::MUNCH_HAS_SD_SHARE
+                => cur_cpu.has_sd_share = Some(x),
         };
         Ok(())
     }
@@ -1013,6 +1021,9 @@ defaultable_struct! {
         cpu_load: u64,
         cpu_util_cfs_boost: u64,
         misfit_task_load: u64,
+        llc_weight: u64,
+        has_sd_share: bool,
+        nr_idle_scan: u64,
     }
 }
 
@@ -1033,6 +1044,7 @@ defaultable_struct! {
         imbalance_pct: u64,
         smt_active: bool,
         imbalance: u64,
+        span_weight: u64,
     }
 }
 
