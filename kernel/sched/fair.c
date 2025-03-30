@@ -9108,15 +9108,6 @@ static bool yield_to_task_fair(struct rq *rq, struct task_struct *p)
 
 static unsigned long __read_mostly max_load_balance_interval = HZ/10;
 
-enum fbq_type { regular, remote, all };
-
-enum migration_type {
-	migrate_load = 0,
-	migrate_util,
-	migrate_task,
-	migrate_misfit
-};
-
 #define LBF_ALL_PINNED	0x01
 #define LBF_NEED_BREAK	0x02
 #define LBF_DST_PINNED  0x04
@@ -11365,7 +11356,8 @@ static struct rq *sched_balance_find_src_rq(struct lb_env *env,
 		 *
 		 * Both cases only affect the total convergence complexity.
 		 */
-		// TODO: munch fbq type, both
+		munch_fbq_type(md, env->fbq_type);
+		munch_fbq_type_cpu(md, i, rt);
 		if (rt > env->fbq_type)
 			continue;
 
@@ -11407,7 +11399,7 @@ static struct rq *sched_balance_find_src_rq(struct lb_env *env,
 		if (sched_asym(env->sd, i, env->dst_cpu) && nr_running == 1)
 			continue;
 
-		// TODO: munch migration type
+		munch_migration_type(md, env->migration_type);
 		switch (env->migration_type) {
 		case migrate_load:
 			/*

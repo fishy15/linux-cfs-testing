@@ -431,6 +431,18 @@ impl MunchOps for RustMunch {
         }
     }
 
+    fn munch_fbq_type(md: &bindings::meal_descriptor, fbq_type: bindings::fbq_type) {
+        if let Err(e) = get_current(md).map(|e| e.set_fbq_type(&fbq_type)) {
+            e.print_error();
+        }
+    }
+
+    fn munch_migration_type(md: &bindings::meal_descriptor, migration_type: bindings::migration_type) {
+        if let Err(e) = get_current(md).map(|e| e.set_migration_type(&migration_type)) {
+            e.print_error();
+        }
+    }
+
     fn munch_u64_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64) {
         if let Err(e) = get_current(md).map(|e| e.set_value_u64_cpu(&location, cpu, x)) {
             e.print_error();
@@ -439,6 +451,12 @@ impl MunchOps for RustMunch {
 
     fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool) {
         if let Err(e) = get_current(md).map(|e| e.set_value_bool_cpu(&location, cpu, x)) {
+            e.print_error();
+        }
+    }
+
+    fn munch_fbq_type_cpu(md: &bindings::meal_descriptor, cpu: usize, fbq_type: bindings::fbq_type) {
+        if let Err(e) = get_current(md).map(|e| e.set_fbq_type_cpu(cpu, &fbq_type)) {
             e.print_error();
         }
     }
@@ -689,7 +707,6 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
-    // TODO: set the idle type on the correct cpu
     fn set_cpu_idle_type(&mut self, idle_type: &bindings::cpu_idle_type) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
@@ -709,6 +726,28 @@ impl LoadBalanceInfo {
 
         let sd = self.get_current_sd()?;
         sd.cpumask = Some(mask.clone());
+        Ok(())
+    }
+
+    fn set_fbq_type(&mut self, fbq_type: &bindings::fbq_type) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let sd = self.get_current_sd()?;
+        sd.fbq_type = Some(fbq_type.clone());
+        Ok(())
+    }
+
+    fn set_migration_type(&mut self, migration_type: &bindings::migration_type) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let sd = self.get_current_sd()?;
+        sd.migration_type = Some(migration_type.clone());
         Ok(())
     }
 
@@ -762,6 +801,18 @@ impl LoadBalanceInfo {
         };
         Ok(())
     }
+
+    fn set_fbq_type_cpu(&mut self, cpu: usize, fbq_type: &bindings::fbq_type) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let cur_cpu = self.get_cpu(cpu)?;
+        cur_cpu.fbq_type = Some(fbq_type.clone());
+        Ok(())
+    }
+
 
     fn set_value_u64_group(&mut self, location: &bindings::munch_location_u64_group, sg_ptr: SchedGroupLocation, x: u64) -> Result<(), SetError> {
         // for debugging, can be removed for performance
@@ -948,6 +999,7 @@ macro_rules! defaultable_struct {
 
 defaultable_struct! {
     LBIPerCpu {
+        fbq_type: bindings::fbq_type,
         idle_cpu: bool,
         is_core_idle: bool,
         nr_running: u64,
@@ -969,6 +1021,8 @@ defaultable_struct! {
         cpu: u64,
         cpumask: bindings::cpumask,
         cpu_idle_type: bindings::cpu_idle_type,
+        fbq_type: bindings::fbq_type,
+        migration_type: bindings::migration_type,
         group_balance_cpu_sg: u64,
         asym_cpucapacity: bool,
         asym_packing: bool,
@@ -1216,6 +1270,26 @@ impl SeqFileWrite for bindings::group_type {
     }
 }
 
+impl SeqFileWrite for bindings::fbq_type {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        match self {
+            bindings::fbq_type::regular => seq_file.write("\"regular\""),
+            bindings::fbq_type::remote => seq_file.write("\"remote\""),
+            bindings::fbq_type::all => seq_file.write("\"all\""),
+        }
+    }
+}
+
+impl SeqFileWrite for bindings::migration_type {
+    fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
+        match self {
+            bindings::migration_type::migrate_load => seq_file.write("\"migrate_load\""),
+            bindings::migration_type::migrate_util => seq_file.write("\"migrate_util\""),
+            bindings::migration_type::migrate_task => seq_file.write("\"migrate_task\""),
+            bindings::migration_type::migrate_misfit => seq_file.write("\"migrate_misfit\""),
+        }
+    }
+}
 
 impl SeqFileWrite for RingBuffer {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {

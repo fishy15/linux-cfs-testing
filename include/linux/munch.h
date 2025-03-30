@@ -1,6 +1,7 @@
 #ifndef _LINUX_MUNCH_H
 #define _LINUX_MUNCH_H
 
+#include "sched/fair_enums.h"
 #include "sched/idle.h"
 #include <linux/sched/idle.h>
 #include <linux/sched/fair_enums.h>
@@ -77,8 +78,11 @@ struct munch_ops {
 	void (*munch64) (struct meal_descriptor *, enum munch_location_u64, uint64_t);
 	void (*munch_cpu_idle_type) (struct meal_descriptor *, enum cpu_idle_type);
 	void (*munch_cpumask) (struct meal_descriptor *, const struct cpumask *);
+	void (*munch_fbq_type) (struct meal_descriptor *, enum fbq_type);
+	void (*munch_migration_type) (struct meal_descriptor *, enum migration_type);
 	void (*munch_bool_cpu) (struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
 	void (*munch_u64_cpu) (struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
+	void (*munch_fbq_type_cpu) (struct meal_descriptor *, size_t, enum fbq_type);
 	void (*munch_u64_group) (struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *, uint64_t);
 	void (*munch_cpumask_group) (struct meal_descriptor *, const struct sched_group *, const struct cpumask *);
 	void (*munch_group_type_group) (struct meal_descriptor *, const struct sched_group *, enum group_type);
@@ -97,8 +101,11 @@ bool munch_bool(struct meal_descriptor *, enum munch_location_bool, bool);
 uint64_t munch_u64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
 enum cpu_idle_type munch_cpu_idle_type(struct meal_descriptor *, enum cpu_idle_type);
 const struct cpumask *munch_cpumask(struct meal_descriptor *, const struct cpumask *);
+enum fbq_type munch_fbq_type(struct meal_descriptor *, enum fbq_type);
+enum migration_type munch_migration_type(struct meal_descriptor *, enum migration_type);
 bool munch_bool_cpu(struct meal_descriptor *, enum munch_location_bool_cpu, size_t, bool);
 uint64_t munch_u64_cpu(struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
+enum fbq_type munch_fbq_type_cpu(struct meal_descriptor *, size_t, enum fbq_type);
 uint64_t munch_u64_group(struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *, uint64_t);
 const struct cpumask *munch_cpumask_group(struct meal_descriptor *, const struct sched_group *, const struct cpumask *);
 enum group_type munch_group_type_group(struct meal_descriptor *, const struct sched_group *, enum group_type);

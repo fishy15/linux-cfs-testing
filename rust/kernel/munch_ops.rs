@@ -21,11 +21,17 @@ pub trait MunchOps: Sized {
     fn munch_cpu_idle_type(md: &bindings::meal_descriptor, idle_type: bindings::cpu_idle_type);
     /// munch a cpumask
     fn munch_cpumask(md: &bindings::meal_descriptor, cpumask: &bindings::cpumask);
+    /// munch a fbq_type
+    fn munch_fbq_type(md: &bindings::meal_descriptor, idle_type: bindings::fbq_type);
+    /// munch a migration_type
+    fn munch_migration_type(md: &bindings::meal_descriptor, idle_type: bindings::migration_type);
     //// traits that are per cpu
     /// munch a u64 (per cpu)
     fn munch_u64_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64);
     /// munch a bool (per cpu)
     fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool);
+    /// munch a fbq_type (per cpu)
+    fn munch_fbq_type_cpu(md: &bindings::meal_descriptor, cpu: usize, idle_type: bindings::fbq_type);
     //// traits that are per group
     /// munch a u64 (per group)
     fn munch_u64_group(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_group, sg: SchedGroupLocation, x: u64);
@@ -85,6 +91,18 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         }
     }
 
+    unsafe extern "C" fn munch_fbq_type_c(md: *mut bindings::meal_descriptor, idle_type: bindings::fbq_type) {
+        unsafe {
+            T::munch_fbq_type(&*md, idle_type)
+        }
+    }
+
+    unsafe extern "C" fn munch_migration_type_c(md: *mut bindings::meal_descriptor, idle_type: bindings::migration_type) {
+        unsafe {
+            T::munch_migration_type(&*md, idle_type)
+        }
+    }
+
     unsafe extern "C" fn munch_u64_cpu_c(md: *mut bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64) {
         unsafe {
             T::munch_u64_cpu(&*md, location, cpu, x)
@@ -94,6 +112,12 @@ impl<T: MunchOps> MunchOpsVTable<T> {
     unsafe extern "C" fn munch_bool_cpu_c(md: *mut bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool) {
         unsafe {
             T::munch_bool_cpu(&*md, location, cpu, x)
+        }
+    }
+
+    unsafe extern "C" fn munch_fbq_type_cpu_c(md: *mut bindings::meal_descriptor, cpu: usize, x: bindings::fbq_type) {
+        unsafe {
+            T::munch_fbq_type_cpu(&*md, cpu, x)
         }
     }
 
@@ -158,7 +182,10 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         munch64: Some(Self::munch64_c),
         munch_cpu_idle_type: Some(Self::munch_cpu_idle_type_c),
         munch_cpumask: Some(Self::munch_cpumask_c),
+        munch_fbq_type: Some(Self::munch_fbq_type_c),
+        munch_migration_type: Some(Self::munch_migration_type_c),
         munch_u64_cpu: Some(Self::munch_u64_cpu_c),
+        munch_fbq_type_cpu: Some(Self::munch_fbq_type_cpu_c),
         munch_bool_cpu: Some(Self::munch_bool_cpu_c),
         munch_u64_group: Some(Self::munch_u64_group_c),
         munch_cpumask_group: Some(Self::munch_cpumask_group_c),

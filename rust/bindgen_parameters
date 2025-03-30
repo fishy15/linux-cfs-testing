@@ -44,3 +44,5 @@
 --rustified-enum "munch_location_u64_group"
 --rustified-enum "cpu_idle_type"
 --rustified-enum "group_type"
+--rustified-enum "fbq_type"
+--rustified-enum "migration_type"

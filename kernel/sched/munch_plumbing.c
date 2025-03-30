@@ -41,6 +41,20 @@ const struct cpumask *munch_cpumask(struct meal_descriptor *md, const struct cpu
 	return x;
 }
 
+enum fbq_type munch_fbq_type(struct meal_descriptor *md, enum fbq_type x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_fbq_type(md, x);
+	}
+	return x;
+}
+
+enum migration_type munch_migration_type(struct meal_descriptor *md, enum migration_type x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_migration_type(md, x);
+	}
+	return x;
+}
+
 bool munch_bool_cpu(struct meal_descriptor *md, enum munch_location_bool_cpu location, size_t cpu, bool x) {
 	if (is_muncher_valid && md != NULL) {
 		muncher.munch_bool_cpu(md, location, cpu, x);
@@ -51,6 +65,13 @@ bool munch_bool_cpu(struct meal_descriptor *md, enum munch_location_bool_cpu loc
 uint64_t munch_u64_cpu(struct meal_descriptor *md, enum munch_location_u64_cpu location, size_t cpu, uint64_t x) {
 	if (is_muncher_valid && md != NULL) {
 		muncher.munch_u64_cpu(md, location, cpu, x);
+	}
+	return x;
+}
+
+enum fbq_type munch_fbq_type_cpu(struct meal_descriptor * md, size_t cpu, enum fbq_type x) {
+	if (is_muncher_valid && md != NULL) {
+		muncher.munch_fbq_type_cpu(md, cpu, x);
 	}
 	return x;
 }
