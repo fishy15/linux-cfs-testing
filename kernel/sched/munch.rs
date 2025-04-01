@@ -955,11 +955,7 @@ trait SeqFileWrite {
 
 macro_rules! write_body {
     ($seq_file:ident, $k:ident: $v:expr) => {
-        $seq_file.write(&'"')?;
-        $seq_file.write(stringify!($k))?;
-        $seq_file.write(&'"')?;
-        $seq_file.write(":")?;
-        $seq_file.write($v)?;
+        $seq_file.write_kv(stringify!($k), $v)?;
     };
     ($seq_file:ident, $k:ident: $v:expr, $($ks:ident: $vs:expr),+) => {
         write_body!($seq_file, $k: $v);
@@ -1388,9 +1384,19 @@ impl SeqFileWriter {
         val.write(self)
     }
 
+    fn write_key(&mut self, key: &str) -> Result<(), DumpError> {
+        key.chars().try_for_each(|c| {
+            if c == '_' {
+                self.write(&'-')
+            } else {
+                self.write(&c)
+            }
+        })
+    }
+
     fn write_kv<T: SeqFileWrite + ?Sized>(&mut self, key: &str, val: &T) -> Result<(), DumpError> {
         self.write("\"")?;
-        self.write(key)?;
+        self.write_key(key)?;
         self.write("\":")?;
         self.write(val)
     }
