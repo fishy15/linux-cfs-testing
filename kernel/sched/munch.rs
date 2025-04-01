@@ -173,7 +173,7 @@ fn print_munch_iterator(seq_file: &mut SeqFileWriter, buffer: &RingBuffer, it: &
 
     if entry.finished.load(Ordering::SeqCst) {
         if is_start_of_entry(&it) {
-            seq_file.write("{\"per_sd_info\":[")?;
+            seq_file.write("{\"per-sd-info\":[")?;
         }
 
         if is_printing_sd(&it, &entry) {
@@ -204,7 +204,7 @@ fn print_munch_iterator(seq_file: &mut SeqFileWriter, buffer: &RingBuffer, it: &
             }
         } else {
             if is_start_of_cpu(&it, &entry) {
-                seq_file.write("\"per_cpu_info\":[")?;
+                seq_file.write("\"per-cpu-info\":[")?;
             }
 
             let cpu_index = it.cpu_index;
