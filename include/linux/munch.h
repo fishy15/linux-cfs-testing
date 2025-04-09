@@ -20,11 +20,12 @@ enum munch_location_bool {
 };
 
 enum munch_location_u64 {
-	MUNCH_CPU_NUMBER,
+	MUNCH_DST_CPU,
 	MUNCH_SD_AVG_LOAD,
 	MUNCH_IMBALANCE_PCT,
 	MUNCH_IMBALANCE,
 	MUNCH_SPAN_WEIGHT,
+	MUNCH_SRC_CPU,
 };
 
 enum munch_location_u64_cpu {

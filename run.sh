@@ -12,4 +12,4 @@ else
     kvm='-accel kvm'
 fi
     
-$sudo qemu-system-x86_64 $kern "$args" $kvm -nographic -hda d.q -hdb fishdisk.q -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2222-:22 -smp 16 -m 16G $@
+$sudo qemu-system-x86_64 $kern "$args" $kvm -nographic -hda d.q -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2222-:22 -smp 16 -m 16G $@

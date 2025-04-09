@@ -11660,6 +11660,8 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 		.fbq_type	= all,
 		.tasks		= LIST_HEAD_INIT(env.tasks),
 	};
+
+        munch_u64(md, MUNCH_DST_CPU, env.dst_cpu);
         
 	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
 	munch_cpumask(md, cpus);
@@ -11692,6 +11694,7 @@ redo:
 
 	schedstat_add(sd->lb_imbalance[idle], env.imbalance);
 
+	munch_u64(md, MUNCH_SRC_CPU, busiest->cpu);
 	env.src_cpu = busiest->cpu;
 	env.src_rq = busiest;
 
@@ -12109,7 +12112,6 @@ static void sched_balance_domains(struct rq *rq, enum cpu_idle_type idle)
 
 	struct meal_descriptor md;
 	open_meal(cpu, &md);
-        munch_u64(&md, MUNCH_CPU_NUMBER, cpu);
 
 	rcu_read_lock();
 	for_each_domain(cpu, sd) {

@@ -683,8 +683,8 @@ impl LoadBalanceInfo {
         }
 
         match location {
-            bindings::munch_location_u64::MUNCH_CPU_NUMBER
-                => self.get_current_sd()?.cpu = Some(x),
+            bindings::munch_location_u64::MUNCH_DST_CPU
+                => self.get_current_sd()?.dst_cpu = Some(x),
             bindings::munch_location_u64::MUNCH_SD_AVG_LOAD
                 => self.get_current_sd()?.avg_load = Some(x),
             bindings::munch_location_u64::MUNCH_IMBALANCE_PCT
@@ -693,6 +693,8 @@ impl LoadBalanceInfo {
                 => self.get_current_sd()?.imbalance = Some(x),
             bindings::munch_location_u64::MUNCH_SPAN_WEIGHT
                 => self.get_current_sd()?.span_weight = Some(x),
+            bindings::munch_location_u64::MUNCH_SRC_CPU
+                => self.get_current_sd()?.src_cpu = Some(x),
         };
         Ok(())
     }
@@ -1025,7 +1027,7 @@ defaultable_struct! {
 
 defaultable_struct! {
     LBIPerSchedDomainInfo {
-        cpu: u64,
+        dst_cpu: u64,
         cpumask: bindings::cpumask,
         cpu_idle_type: bindings::cpu_idle_type,
         fbq_type: bindings::fbq_type,
@@ -1041,6 +1043,7 @@ defaultable_struct! {
         smt_active: bool,
         imbalance: u64,
         span_weight: u64,
+        src_cpu: u64,
     }
 }
 
