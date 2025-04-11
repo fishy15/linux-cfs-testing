@@ -10839,7 +10839,7 @@ static void update_idle_cpu_scan(struct lb_env *env,
 	 * balancing, rather than CPU_NEWLY_IDLE, because the latter
 	 * can fire way more frequently than the former.
 	 */
-	munch_cpu_idle_type(md, env->idle);
+	munch_cpu_idle_type_cpu(md, env->dst_cpu, env->idle);
 	if (!sched_feat(SIS_UTIL) || env->idle == CPU_NEWLY_IDLE)
 		return;
 
@@ -11579,7 +11579,7 @@ static int should_we_balance(struct lb_env *env, struct meal_descriptor *md)
 	 * However, we bail out if we already have tasks or a wakeup pending,
 	 * to optimize wakeup latency.
 	 */
-	munch_cpu_idle_type(md, env->idle);
+	munch_cpu_idle_type_cpu(md, env->dst_cpu, env->idle);
 	if (env->idle == CPU_NEWLY_IDLE) {
 		int dst_cpu = env->dst_cpu;
 		munch_u64_cpu(md, MUNCH_NR_RUNNING, dst_cpu, env->dst_rq->nr_running);

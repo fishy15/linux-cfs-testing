@@ -419,12 +419,6 @@ impl MunchOps for RustMunch {
         }
     }
 
-    fn munch_cpu_idle_type(md: &bindings::meal_descriptor, idle_type: bindings::cpu_idle_type) {
-        if let Err(e) = get_current(md).map(|e| e.set_cpu_idle_type(&idle_type)) {
-            e.print_error();
-        }
-    }
-
     fn munch_cpumask(md: &bindings::meal_descriptor, cpumask: &bindings::cpumask) {
         if let Err(e) = get_current(md).map(|e| e.set_cpumask(cpumask)) {
             e.print_error();
@@ -451,6 +445,12 @@ impl MunchOps for RustMunch {
 
     fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool) {
         if let Err(e) = get_current(md).map(|e| e.set_value_bool_cpu(&location, cpu, x)) {
+            e.print_error();
+        }
+    }
+
+    fn munch_cpu_idle_type_cpu(md: &bindings::meal_descriptor, cpu: usize, idle_type: bindings::cpu_idle_type) {
+        if let Err(e) = get_current(md).map(|e| e.set_cpu_idle_type_cpu(cpu, &idle_type)) {
             e.print_error();
         }
     }
@@ -711,17 +711,6 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
-    fn set_cpu_idle_type(&mut self, idle_type: &bindings::cpu_idle_type) -> Result<(), SetError> {
-        // for debugging, can be removed for performance
-        if self.finished.load(Ordering::SeqCst) {
-            panic!("trying to write when entry has finished");
-        }
-
-        let sd = self.get_current_sd()?;
-        sd.cpu_idle_type = Some(idle_type.clone());
-        Ok(())
-    }
-
     fn set_cpumask(&mut self, mask: &bindings::cpumask) -> Result<(), SetError> {
         // for debugging, can be removed for performance
         if self.finished.load(Ordering::SeqCst) {
@@ -811,6 +800,18 @@ impl LoadBalanceInfo {
         };
         Ok(())
     }
+
+    fn set_cpu_idle_type_cpu(&mut self, cpu: usize, idle_type: &bindings::cpu_idle_type) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let cur_cpu = self.get_cpu(cpu)?;
+        cur_cpu.cpu_idle_type = Some(idle_type.clone());
+        Ok(())
+    }
+
 
     fn set_fbq_type_cpu(&mut self, cpu: usize, fbq_type: &bindings::fbq_type) -> Result<(), SetError> {
         // for debugging, can be removed for performance
@@ -1006,6 +1007,7 @@ macro_rules! defaultable_struct {
 defaultable_struct! {
     LBIPerCpu {
         fbq_type: bindings::fbq_type,
+        cpu_idle_type: bindings::cpu_idle_type,
         idle_cpu: bool,
         is_core_idle: bool,
         nr_running: u64,
@@ -1029,7 +1031,6 @@ defaultable_struct! {
     LBIPerSchedDomainInfo {
         dst_cpu: u64,
         cpumask: bindings::cpumask,
-        cpu_idle_type: bindings::cpu_idle_type,
         fbq_type: bindings::fbq_type,
         migration_type: bindings::migration_type,
         group_balance_cpu_sg: u64,

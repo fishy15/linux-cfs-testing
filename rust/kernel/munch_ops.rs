@@ -17,8 +17,6 @@ pub trait MunchOps: Sized {
     fn munch_bool(md: &bindings::meal_descriptor, location: bindings::munch_location_bool, x: bool);
     /// munch a u64
     fn munch64(md: &bindings::meal_descriptor, location: bindings::munch_location_u64, x: u64);
-    /// munch a cpu_idle_type
-    fn munch_cpu_idle_type(md: &bindings::meal_descriptor, idle_type: bindings::cpu_idle_type);
     /// munch a cpumask
     fn munch_cpumask(md: &bindings::meal_descriptor, cpumask: &bindings::cpumask);
     /// munch a fbq_type
@@ -30,6 +28,8 @@ pub trait MunchOps: Sized {
     fn munch_u64_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_u64_cpu, cpu: usize, x: u64);
     /// munch a bool (per cpu)
     fn munch_bool_cpu(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool);
+    /// munch a cpu_idle_type (per cpu)
+    fn munch_cpu_idle_type_cpu(md: &bindings::meal_descriptor, cpu: usize, idle_type: bindings::cpu_idle_type);
     /// munch a fbq_type (per cpu)
     fn munch_fbq_type_cpu(md: &bindings::meal_descriptor, cpu: usize, idle_type: bindings::fbq_type);
     //// traits that are per group
@@ -79,12 +79,6 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         }
     }
 
-    unsafe extern "C" fn munch_cpu_idle_type_c(md: *mut bindings::meal_descriptor, idle_type: bindings::cpu_idle_type) {
-        unsafe {
-            T::munch_cpu_idle_type(&*md, idle_type)
-        }
-    }
-
     unsafe extern "C" fn munch_cpumask_c(md: *mut bindings::meal_descriptor, cpumask: *const bindings::cpumask) {
         unsafe {
             T::munch_cpumask(&*md, &*cpumask)
@@ -112,6 +106,12 @@ impl<T: MunchOps> MunchOpsVTable<T> {
     unsafe extern "C" fn munch_bool_cpu_c(md: *mut bindings::meal_descriptor, location: bindings::munch_location_bool_cpu, cpu: usize, x: bool) {
         unsafe {
             T::munch_bool_cpu(&*md, location, cpu, x)
+        }
+    }
+
+    unsafe extern "C" fn munch_cpu_idle_type_cpu_c(md: *mut bindings::meal_descriptor, cpu: usize, idle_type: bindings::cpu_idle_type) {
+        unsafe {
+            T::munch_cpu_idle_type_cpu(&*md, cpu, idle_type)
         }
     }
 
@@ -180,11 +180,11 @@ impl<T: MunchOps> MunchOpsVTable<T> {
         munch_flag: Some(Self::munch_flag_c),
         munch_bool: Some(Self::munch_bool_c),
         munch64: Some(Self::munch64_c),
-        munch_cpu_idle_type: Some(Self::munch_cpu_idle_type_c),
         munch_cpumask: Some(Self::munch_cpumask_c),
         munch_fbq_type: Some(Self::munch_fbq_type_c),
         munch_migration_type: Some(Self::munch_migration_type_c),
         munch_u64_cpu: Some(Self::munch_u64_cpu_c),
+        munch_cpu_idle_type_cpu: Some(Self::munch_cpu_idle_type_cpu_c),
         munch_fbq_type_cpu: Some(Self::munch_fbq_type_cpu_c),
         munch_bool_cpu: Some(Self::munch_bool_cpu_c),
         munch_u64_group: Some(Self::munch_u64_group_c),
