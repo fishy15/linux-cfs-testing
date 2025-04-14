@@ -29,6 +29,7 @@ enum munch_location_u64 {
 	MUNCH_IMBALANCE,
 	MUNCH_SPAN_WEIGHT,
 	MUNCH_SRC_CPU,
+	MUNCH_NR_TASKS_MOVED,
 };
 
 enum munch_location_u64_cpu {

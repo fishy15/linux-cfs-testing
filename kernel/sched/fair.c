@@ -11952,6 +11952,7 @@ out_one_pinned:
 	    sd->balance_interval < sd->max_interval)
 		sd->balance_interval *= 2;
 out:
+	munch_u64(md, MUNCH_NR_TASKS_MOVED, ld_moved);
 	return ld_moved;
 }
 

@@ -707,6 +707,8 @@ impl LoadBalanceInfo {
                 => self.get_current_sd()?.span_weight = Some(x),
             bindings::munch_location_u64::MUNCH_SRC_CPU
                 => self.get_current_sd()?.src_cpu = Some(x),
+            bindings::munch_location_u64::MUNCH_NR_TASKS_MOVED
+                => self.get_current_sd()?.nr_tasks_moved = Some(x),
         };
         Ok(())
     }
@@ -1087,6 +1089,7 @@ defaultable_struct! {
         prefer_sibling: bool,
         sd_share_llc: bool,
         sd_numa: bool,
+        nr_tasks_moved: u64,
     }
 }
 
