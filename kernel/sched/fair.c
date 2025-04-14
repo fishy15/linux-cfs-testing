@@ -10565,7 +10565,6 @@ static int idle_cpu_without(int cpu, struct task_struct *p)
  * @sgs: variable to hold the statistics for this group.
  * @p: The task for which we look for the idlest group/CPU.
  */
-// TODO: log this function and functions that call it
 static inline void update_sg_wakeup_stats(struct sched_domain *sd,
 					  struct sched_group *group,
 					  struct sg_lb_stats *sgs,
@@ -10610,6 +10609,7 @@ static inline void update_sg_wakeup_stats(struct sched_domain *sd,
 
 	sgs->group_weight = group->group_weight;
 
+	// doesn't need to be logged, only for task wakeup
 	sgs->group_type = group_classify(sd->imbalance_pct, group, sgs, NULL);
 
 	/*
