@@ -9963,8 +9963,9 @@ static inline bool check_misfit_status(struct rq *rq)
  * subtle and fragile situation.
  */
 
-static inline int sg_imbalanced(struct sched_group *group)
+static inline int sg_imbalanced(struct sched_group *group, struct meal_descriptor *md)
 {
+	munch_u64_group(md, MUNCH_GROUP_IMBALANCE, group, group->sgc->imbalance);
 	return group->sgc->imbalance;
 }
 
@@ -9981,15 +9982,20 @@ static inline int sg_imbalanced(struct sched_group *group)
  * any benefit for the load balance.
  */
 static inline bool
-group_has_capacity(unsigned int imbalance_pct, struct sg_lb_stats *sgs)
+group_has_capacity(unsigned int imbalance_pct, struct sg_lb_stats *sgs, struct meal_descriptor *md, struct sched_group *group)
 {
+	munch_u64_group(md, MUNCH_SUM_NR_RUNNING, group, sgs->sum_nr_running);
+	munch_u64_group(md, MUNCH_GROUP_WEIGHT, group, sgs->group_weight);
 	if (sgs->sum_nr_running < sgs->group_weight)
 		return true;
 
+	munch_u64_group(md, MUNCH_GROUP_CAPACITY, group, sgs->group_capacity);
+	munch_u64_group(md, MUNCH_GROUP_RUNNABLE, group, sgs->group_runnable);
 	if ((sgs->group_capacity * imbalance_pct) <
 			(sgs->group_runnable * 100))
 		return false;
 
+	munch_u64_group(md, MUNCH_GROUP_UTIL, group, sgs->group_util);
 	if ((sgs->group_capacity * 100) >
 			(sgs->group_util * imbalance_pct))
 		return true;
@@ -10006,15 +10012,20 @@ group_has_capacity(unsigned int imbalance_pct, struct sg_lb_stats *sgs)
  *  false.
  */
 static inline bool
-group_is_overloaded(unsigned int imbalance_pct, struct sg_lb_stats *sgs)
+group_is_overloaded(unsigned int imbalance_pct, struct sg_lb_stats *sgs, struct meal_descriptor *md, struct sched_group *group)
 {
+	munch_u64_group(md, MUNCH_SUM_NR_RUNNING, group, sgs->sum_nr_running);
+	munch_u64_group(md, MUNCH_GROUP_WEIGHT, group, sgs->group_weight);
 	if (sgs->sum_nr_running <= sgs->group_weight)
 		return false;
 
+	munch_u64_group(md, MUNCH_GROUP_CAPACITY, group, sgs->group_capacity);
+	munch_u64_group(md, MUNCH_GROUP_UTIL, group, sgs->group_util);
 	if ((sgs->group_capacity * 100) <
 			(sgs->group_util * imbalance_pct))
 		return true;
 
+	munch_u64_group(md, MUNCH_GROUP_RUNNABLE, group, sgs->group_runnable);
 	if ((sgs->group_capacity * imbalance_pct) <
 			(sgs->group_runnable * 100))
 		return true;
@@ -10025,24 +10036,31 @@ group_is_overloaded(unsigned int imbalance_pct, struct sg_lb_stats *sgs)
 static inline enum
 group_type group_classify(unsigned int imbalance_pct,
 			  struct sched_group *group,
-			  struct sg_lb_stats *sgs)
+			  struct sg_lb_stats *sgs,
+			  struct meal_descriptor *md)
 {
-	if (group_is_overloaded(imbalance_pct, sgs))
+	if (group_is_overloaded(imbalance_pct, sgs, md, group))
 		return group_overloaded;
 
-	if (sg_imbalanced(group))
+	if (sg_imbalanced(group, md))
 		return group_imbalanced;
 
+	BUG_ON(sgs->group_asym_packing != 0 && sgs->group_asym_packing != 1);
+	munch_bool_group(md, MUNCH_GROUP_ASYM_PACKING, group, sgs->group_asym_packing);
 	if (sgs->group_asym_packing)
 		return group_asym_packing;
 
+	BUG_ON(sgs->group_smt_balance != 0 && sgs->group_smt_balance != 1);
+	munch_bool_group(md, MUNCH_GROUP_SMT_BALANCE, group, sgs->group_smt_balance);
 	if (sgs->group_smt_balance)
 		return group_smt_balance;
 
+	BUG_ON(sgs->group_misfit_task_load != 0 && sgs->group_misfit_task_load != 1);
+	munch_bool_group(md, MUNCH_GROUP_MISFIT_TASK_LOAD, group, sgs->group_misfit_task_load);
 	if (sgs->group_misfit_task_load)
 		return group_misfit_task;
 
-	if (!group_has_capacity(imbalance_pct, sgs))
+	if (!group_has_capacity(imbalance_pct, sgs, md, group))
 		return group_fully_busy;
 
 	return group_has_spare;
@@ -10198,7 +10216,8 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 				      struct sched_group *group,
 				      struct sg_lb_stats *sgs,
 				      bool *sg_overloaded,
-				      bool *sg_overutilized)
+				      bool *sg_overutilized,
+				      struct meal_descriptor *md)
 {
 	int i, nr_running, local_group;
 
@@ -10266,7 +10285,7 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 	if (!local_group && smt_balance(env, sgs, group))
 		sgs->group_smt_balance = 1;
 
-	sgs->group_type = group_classify(env->sd->imbalance_pct, group, sgs);
+	sgs->group_type = group_classify(env->sd->imbalance_pct, group, sgs, md);
 
 	/* Computing avg_load makes sense only when group is overloaded */
 	if (sgs->group_type == group_overloaded)
@@ -10359,8 +10378,10 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 		 * If we have more than one misfit sg go with the biggest
 		 * misfit.
 		 */
-		munch_u64_group(md, MUNCH_MISFIT_TASK_LOAD_SG, sg, sgs->group_misfit_task_load);
-		munch_u64_group(md, MUNCH_MISFIT_TASK_LOAD_SG, sds->busiest, busiest->group_misfit_task_load);
+		BUG_ON(sgs->group_asym_packing != 0 && sgs->group_asym_packing != 1);
+		BUG_ON(busiest->group_asym_packing != 0 && busiest->group_asym_packing != 1);
+		munch_bool_group(md, MUNCH_GROUP_MISFIT_TASK_LOAD, sg, sgs->group_misfit_task_load);
+		munch_bool_group(md, MUNCH_GROUP_MISFIT_TASK_LOAD, sds->busiest, busiest->group_misfit_task_load);
 		return sgs->group_misfit_task_load > busiest->group_misfit_task_load;
 
 	case group_smt_balance:
@@ -10544,6 +10565,7 @@ static int idle_cpu_without(int cpu, struct task_struct *p)
  * @sgs: variable to hold the statistics for this group.
  * @p: The task for which we look for the idlest group/CPU.
  */
+// TODO: log this function and functions that call it
 static inline void update_sg_wakeup_stats(struct sched_domain *sd,
 					  struct sched_group *group,
 					  struct sg_lb_stats *sgs,
@@ -10588,7 +10610,7 @@ static inline void update_sg_wakeup_stats(struct sched_domain *sd,
 
 	sgs->group_weight = group->group_weight;
 
-	sgs->group_type = group_classify(sd->imbalance_pct, group, sgs);
+	sgs->group_type = group_classify(sd->imbalance_pct, group, sgs, NULL);
 
 	/*
 	 * Computing avg_load makes sense only when group is fully busy or
@@ -10931,7 +10953,7 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 				update_group_capacity(env->sd, env->dst_cpu);
 		}
 
-		update_sg_lb_stats(env, sds, sg, sgs, &sg_overloaded, &sg_overutilized);
+		update_sg_lb_stats(env, sds, sg, sgs, &sg_overloaded, &sg_overutilized, md);
 
 		if (!local_group && update_sd_pick_busiest(env, sds, sg, sgs, md)) {
 			sds->busiest = sg;
@@ -10977,14 +10999,16 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
  * @env: load balance environment
  * @sds: statistics of the sched_domain whose imbalance is to be calculated.
  */
-static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *sds)
+static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *sds, struct meal_descriptor *md)
 {
 	struct sg_lb_stats *local, *busiest;
 
 	local = &sds->local_stat;
 	busiest = &sds->busiest_stat;
 
+	munch_group_type_group(md, sds->busiest, busiest->group_type);
 	if (busiest->group_type == group_misfit_task) {
+		munch_bool(md, MUNCH_ASYM_CPUCAPACITY, (env->sd->flags & SD_ASYM_CPUCAPACITY) != 0);
 		if (env->sd->flags & SD_ASYM_CPUCAPACITY) {
 			/* Set imbalance to allow misfit tasks to be balanced. */
 			env->migration_type = migrate_misfit;
@@ -11033,7 +11057,10 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
 	 * Try to use spare capacity of local group without overloading it or
 	 * emptying busiest.
 	 */
+	munch_group_type_group(md, sds->local, local->group_type);
 	if (local->group_type == group_has_spare) {
+		munch_group_type_group(md, sds->busiest, busiest->group_type);
+		munch_bool(md, MUNCH_SD_SHARE_LLC, (env->sd->flags & SD_SHARE_LLC) != 0);
 		if ((busiest->group_type > group_fully_busy) &&
 		    !(env->sd->flags & SD_SHARE_LLC)) {
 			/*
@@ -11063,6 +11090,8 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
 			return;
 		}
 
+		munch_u64_group(md, MUNCH_GROUP_WEIGHT, sds->busiest, busiest->group_weight);
+		munch_bool(md, MUNCH_PREFER_SIBLING, sds->prefer_sibling);
 		if (busiest->group_weight == 1 || sds->prefer_sibling) {
 			/*
 			 * When prefer sibling, evenly spread running tasks on
@@ -11083,6 +11112,7 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
 
 #ifdef CONFIG_NUMA
 		/* Consider allowing a small imbalance between NUMA groups */
+		munch_bool(md, MUNCH_SD_NUMA, (env->sd->flags & SD_NUMA) != 0);
 		if (env->sd->flags & SD_NUMA) {
 			env->imbalance = adjust_numa_imbalance(env->imbalance,
 							       local->sum_nr_running + 1,
@@ -11113,6 +11143,8 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
 		 * If the local group is more loaded than the selected
 		 * busiest group don't try to pull any tasks.
 		 */
+		munch_u64_group(md, MUNCH_SG_AVG_LOAD, sds->local, local->avg_load);
+		munch_u64_group(md, MUNCH_SG_AVG_LOAD, sds->busiest, busiest->avg_load);
 		if (local->avg_load >= busiest->avg_load) {
 			env->imbalance = 0;
 			return;
@@ -11125,6 +11157,7 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
 		 * If the local group is more loaded than the average system
 		 * load, don't try to pull any tasks.
 		 */
+		munch_u64(md, MUNCH_SD_AVG_LOAD, sds->avg_load);
 		if (local->avg_load >= sds->avg_load) {
 			env->imbalance = 0;
 			return;
@@ -11315,7 +11348,7 @@ static struct sched_group *sched_balance_find_src_group(struct lb_env *env, stru
 
 force_balance:
 	/* Looks like there is an imbalance. Compute it */
-	calculate_imbalance(env, &sds);
+	calculate_imbalance(env, &sds, md);
 	return env->imbalance ? sds.busiest : NULL;
 
 out_balanced:

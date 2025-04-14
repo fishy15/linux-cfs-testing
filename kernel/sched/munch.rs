@@ -467,6 +467,12 @@ impl MunchOps for RustMunch {
         }
     }
 
+    fn munch_bool_group(md: &bindings::meal_descriptor, location: bindings::munch_location_bool_group, sg: SchedGroupLocation, x: bool) {
+        if let Err(e) = get_current(md).map(|e| e.set_value_bool_group(&location, sg, x)) {
+            e.print_error();
+        }
+    }
+
     fn munch_cpumask_group(md: &bindings::meal_descriptor, sg: SchedGroupLocation, cpumask: &bindings::cpumask) {
         if let Err(e) = get_current(md).map(|e| e.set_cpumask_group(sg, cpumask)) {
             e.print_error();
@@ -672,6 +678,12 @@ impl LoadBalanceInfo {
                 => sd.has_busiest = Some(x),
             bindings::munch_location_bool::MUNCH_SMT_ACTIVE
                 => sd.smt_active = Some(x),
+            bindings::munch_location_bool::MUNCH_PREFER_SIBLING
+                => sd.prefer_sibling = Some(x),
+            bindings::munch_location_bool::MUNCH_SD_SHARE_LLC
+                => sd.sd_share_llc = Some(x),
+            bindings::munch_location_bool::MUNCH_SD_NUMA
+                => sd.sd_numa = Some(x),
         };
         Ok(())
     }
@@ -824,6 +836,25 @@ impl LoadBalanceInfo {
         Ok(())
     }
 
+    fn set_value_bool_group(&mut self, location: &bindings::munch_location_bool_group, sg_ptr: SchedGroupLocation, x: bool) -> Result<(), SetError> {
+        // for debugging, can be removed for performance
+        if self.finished.load(Ordering::SeqCst) {
+            panic!("trying to write when entry has finished");
+        }
+
+        let sd = self.get_current_sd()?;
+        let sg = sd.get_sg(sg_ptr)?;
+
+        match location {
+            bindings::munch_location_bool_group::MUNCH_GROUP_ASYM_PACKING
+                => sg.asym_packing = Some(x),
+            bindings::munch_location_bool_group::MUNCH_GROUP_SMT_BALANCE
+                => sg.smt_balance = Some(x),
+            bindings::munch_location_bool_group::MUNCH_GROUP_MISFIT_TASK_LOAD
+                => sg.misfit_task_load = Some(x),
+        };
+        Ok(())
+    }
 
     fn set_value_u64_group(&mut self, location: &bindings::munch_location_u64_group, sg_ptr: SchedGroupLocation, x: u64) -> Result<(), SetError> {
         // for debugging, can be removed for performance
@@ -847,12 +878,20 @@ impl LoadBalanceInfo {
                 => sg.avg_load = Some(x),
             bindings::munch_location_u64_group::MUNCH_SG_ASYM_PREFER_CPU
                 => sg.asym_prefer_cpu = Some(x),
-            bindings::munch_location_u64_group::MUNCH_MISFIT_TASK_LOAD_SG
-                => sg.misfit_task_load = Some(x),
             bindings::munch_location_u64_group::MUNCH_SG_IDLE_CPUS
                 => sg.idle_cpus = Some(x),
             bindings::munch_location_u64_group::MUNCH_GROUP_BALANCE_CPU
                 => sg.group_balance_cpu = Some(x),
+            bindings::munch_location_u64_group::MUNCH_GROUP_WEIGHT
+                => sg.group_weight = Some(x),
+            bindings::munch_location_u64_group::MUNCH_GROUP_CAPACITY
+                => sg.group_capacity = Some(x),
+            bindings::munch_location_u64_group::MUNCH_GROUP_UTIL
+                => sg.group_util = Some(x),
+            bindings::munch_location_u64_group::MUNCH_GROUP_RUNNABLE
+                => sg.group_runnable = Some(x),
+            bindings::munch_location_u64_group::MUNCH_GROUP_IMBALANCE
+                => sg.group_imbalance = Some(x),
         };
         Ok(())
     }
@@ -1045,6 +1084,9 @@ defaultable_struct! {
         imbalance: u64,
         span_weight: u64,
         src_cpu: u64,
+        prefer_sibling: bool,
+        sd_share_llc: bool,
+        sd_numa: bool,
     }
 }
 
@@ -1058,9 +1100,16 @@ defaultable_struct! {
         min_capacity: u64,
         avg_load: u64,
         asym_prefer_cpu: u64,
-        misfit_task_load: u64,
         idle_cpus: u64,
         group_balance_cpu: u64,
+        group_weight: u64,
+        asym_packing: bool,
+        smt_balance: bool,
+        misfit_task_load: bool,
+        group_capacity: u64,
+        group_util: u64,
+        group_runnable: u64,
+        group_imbalance: u64,
     }
 }
 

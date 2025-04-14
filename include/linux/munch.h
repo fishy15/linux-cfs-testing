@@ -17,6 +17,9 @@ enum munch_location_bool {
 	MUNCH_ASYM_PACKING,
 	MUNCH_HAS_BUSIEST,
 	MUNCH_SMT_ACTIVE,
+	MUNCH_PREFER_SIBLING,
+	MUNCH_SD_SHARE_LLC,
+	MUNCH_SD_NUMA,
 };
 
 enum munch_location_u64 {
@@ -36,7 +39,7 @@ enum munch_location_u64_cpu {
 	MUNCH_ARCH_SCALE_CPU_CAPACITY,
 	MUNCH_CPU_LOAD,
 	MUNCH_CPU_UTIL_CFS_BOOST,
-	MUNCH_MISFIT_TASK_LOAD,
+	MUNCH_MISFIT_TASK_LOAD, // TODO: maybe should be a bool?
 	MUNCH_LLC_WEIGHT,
 	MUNCH_NR_IDLE_SCAN,
 };
@@ -50,6 +53,12 @@ enum munch_location_bool_cpu {
 	MUNCH_HAS_SD_SHARE,
 };
 
+enum munch_location_bool_group {
+	MUNCH_GROUP_ASYM_PACKING,
+	MUNCH_GROUP_SMT_BALANCE,
+	MUNCH_GROUP_MISFIT_TASK_LOAD,
+};
+
 enum munch_location_u64_group {
 	MUNCH_SUM_H_NR_RUNNING,
 	MUNCH_SUM_NR_RUNNING,
@@ -57,9 +66,13 @@ enum munch_location_u64_group {
 	MUNCH_SGC_MIN_CAPACITY,
 	MUNCH_SG_AVG_LOAD,
 	MUNCH_SG_ASYM_PREFER_CPU,
-	MUNCH_MISFIT_TASK_LOAD_SG,
 	MUNCH_SG_IDLE_CPUS,
 	MUNCH_GROUP_BALANCE_CPU,
+	MUNCH_GROUP_WEIGHT,
+	MUNCH_GROUP_CAPACITY,
+	MUNCH_GROUP_UTIL,
+	MUNCH_GROUP_RUNNABLE,
+	MUNCH_GROUP_IMBALANCE,
 };
 
 struct meal_descriptor {
@@ -88,6 +101,7 @@ struct munch_ops {
 	void (*munch_u64_cpu) (struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
 	void (*munch_cpu_idle_type_cpu) (struct meal_descriptor *, size_t, enum cpu_idle_type);
 	void (*munch_fbq_type_cpu) (struct meal_descriptor *, size_t, enum fbq_type);
+	void (*munch_bool_group) (struct meal_descriptor *, enum munch_location_bool_group, const struct sched_group *, bool);
 	void (*munch_u64_group) (struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *, uint64_t);
 	void (*munch_cpumask_group) (struct meal_descriptor *, const struct sched_group *, const struct cpumask *);
 	void (*munch_group_type_group) (struct meal_descriptor *, const struct sched_group *, enum group_type);
@@ -111,6 +125,7 @@ bool munch_bool_cpu(struct meal_descriptor *, enum munch_location_bool_cpu, size
 uint64_t munch_u64_cpu(struct meal_descriptor *, enum munch_location_u64_cpu, size_t, uint64_t);
 enum cpu_idle_type munch_cpu_idle_type_cpu(struct meal_descriptor *, size_t, enum cpu_idle_type);
 enum fbq_type munch_fbq_type_cpu(struct meal_descriptor *, size_t, enum fbq_type);
+uint64_t munch_bool_group(struct meal_descriptor *, enum munch_location_bool_group, const struct sched_group *, bool);
 uint64_t munch_u64_group(struct meal_descriptor *, enum munch_location_u64_group, const struct sched_group *, uint64_t);
 const struct cpumask *munch_cpumask_group(struct meal_descriptor *, const struct sched_group *, const struct cpumask *);
 enum group_type munch_group_type_group(struct meal_descriptor *, const struct sched_group *, enum group_type);
