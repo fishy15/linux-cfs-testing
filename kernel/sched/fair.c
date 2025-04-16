@@ -4373,6 +4373,7 @@ update_tg_cfs_load(struct cfs_rq *cfs_rq, struct sched_entity *se, struct cfs_rq
 	 * runnable_sum is in [0 : LOAD_AVG_MAX]
 	 */
 	running_sum = se->avg.util_sum >> SCHED_CAPACITY_SHIFT;
+	// doesn't need to be logged, only for task wakeup
 	runnable_sum = max(runnable_sum, running_sum);
 
 	load_sum = se_weight(se) * runnable_sum;
@@ -11695,9 +11696,15 @@ static int sched_balance_rq(int this_cpu, struct rq *this_rq,
 	};
 
         munch_u64(md, MUNCH_DST_CPU, env.dst_cpu);
-        
+
 	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
 	munch_cpumask(md, cpus);
+
+	// munch all the loads to make them known
+	int munch_cpu;
+	for_each_cpu(munch_cpu, cpus) {
+		munch_u64_cpu(md, MUNCH_CPU_LOAD, munch_cpu, cpu_load(cpu_rq(munch_cpu)));
+	}
 
 	schedstat_inc(sd->lb_count[idle]);
 
