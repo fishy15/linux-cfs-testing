@@ -11,7 +11,7 @@ cd $(dirname $0)
 rm -rf ../kbuild && mkdir ../kbuild
 
 # install rustup
-which rustup || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+which rustup || curl https://sh.rustup.rs -sSf | sh -s -- -y
 
 # install clang
 sudo apt install -y clang lld debhelper-compat
