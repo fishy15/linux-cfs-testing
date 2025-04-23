@@ -37,7 +37,11 @@ void ready_ssh () {
     bzero(ssh_invoc, 1024);
     snprintf(ssh_invoc, 1024, "ssh -p%d -o 'StrictHostKeyChecking=no' k@localhost whoami", ssh_port);
 
+    printf("trying to ssh");
+
     while (system(ssh_invoc) != 0);
+
+    printf("i am ready to ssh!");
 }
 
 void run_waitfor () {
@@ -147,9 +151,18 @@ void run_gdb (pid_t ppid) {
     if (gdb == 0) {
         CHECK_EQ(dup2(pipe_gdb[0], 0), 0);
         
-        execl("copy-file.sh",
-              "0.txt",
-              NULL);
+	char command[256], pid_s[256];
+	snprintf(command, sizeof(command), "%s/linux/copy-file.sh", getenv("HOME"));
+	snprintf(pid_s, sizeof(pid_s), "%ld", (long) ppid);
+
+	printf("going to call copy file now..., %s", command);
+	fflush(stdout);
+	execl("/usr/bin/bash",
+	      "bash",
+	      command,
+	      "0",
+	      pid_s,
+	      NULL);
     }
     CHECK(gdb > 0);
 }
@@ -194,4 +207,6 @@ int main (int argc, char **argv) {
 
     printf("====unpause====\n");
     printf("done!\n");
+
+    return 0;
 }
