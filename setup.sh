@@ -6,6 +6,8 @@ set -e
 export PATH=$HOME/.cargo/bin:$PATH
 
 # this should be ~/linux
+cd $(dirname $0)
+
 rm -rf ../kbuild && mkdir ../kbuild
 
 # install rustup
@@ -28,3 +30,5 @@ cd ../kbuild
 make LLVM=1 -C ../linux O=$(pwd) defconfig
 cp ../linux/myconfig .config
 make LLVM=1 rustavailable
+
+echo "export PATH=$HOME/.cargo/bin:$PATH" >> ~/.bashrc
