@@ -13,10 +13,10 @@ if [ -z "$TOPOLOGY" ]; then
 	topology="-smp cpus=2"
 elif [ "$TOPOLOGY" = "16-tiered" ]; then
 	topology="\
-		-object memory-backend-ram,size=1G,id=m0 \
-		-object memory-backend-ram,size=1G,id=m1 \
-		-object memory-backend-ram,size=1G,id=m2 \
-		-object memory-backend-ram,size=1G,id=m3 \
+		-object memory-backend-ram,size=4G,id=m0 \
+		-object memory-backend-ram,size=4G,id=m1 \
+		-object memory-backend-ram,size=4G,id=m2 \
+		-object memory-backend-ram,size=4G,id=m3 \
 		-numa node,cpus=0-3,nodeid=0,memdev=m0 \
 		-numa node,cpus=4-7,nodeid=1,memdev=m1 \
 		-numa node,cpus=8-11,nodeid=2,memdev=m2 \
