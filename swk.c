@@ -155,6 +155,9 @@ void run_gdb (pid_t ppid) {
 	snprintf(command, sizeof(command), "%s/linux/copy-file.sh", getenv("HOME"));
 	snprintf(pid_s, sizeof(pid_s), "%ld", (long) ppid);
 
+
+	printf("going to sleep...");
+	sleep(30); // sleep for longer until the task starts
 	printf("going to call copy file now..., %s", command);
 	fflush(stdout);
 	execl("/usr/bin/bash",
