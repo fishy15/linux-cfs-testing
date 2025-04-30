@@ -28,10 +28,10 @@ fi
 
 if [ ! -z $K ]; then
 	kern="-kernel ../kbuild/arch/x86_64/boot/bzImage -append"
-	args="root=/dev/sda1 console=ttyS0,115200 nokaslr"
+	args="'root=/dev/sda1 console=ttyS0,115200 nokaslr'"
 else
 	sudo=sudo
 	kvm='-accel kvm'
 fi
 	
-$sudo qemu-system-x86_64 $kern "$args" $kvm -nographic -hda d.q -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::$SSH-:22 $topology -m 16G $@
+sh -c "$sudo qemu-system-x86_64 $kern $args $kvm -nographic -device virtio-net-pci,netdev=net0 -netdev user,id=net0,hostfwd=tcp::$SSH-:22 $topology -m 16G d.q $@"
