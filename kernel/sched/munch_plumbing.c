@@ -1,10 +1,16 @@
 #include <linux/munch.h>
 #include <linux/proc_fs.h>
 
+// stores pointers to Rust functions
 struct munch_ops muncher;
 bool is_muncher_valid = false;
 
+// length of ring buffer
 const size_t MUNCH_NUM_ENTRIES = 256;
+
+// definitions for the global functions declared in `munch.h`
+// just checks if vtable has been set and `md` is not null
+// `md` could be null if it was created when `is_muncher_valid` was false
 
 void munch_flag(struct meal_descriptor *md, enum munch_flag flag) {
 	if (is_muncher_valid && md != NULL) {

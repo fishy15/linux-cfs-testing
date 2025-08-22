@@ -15,10 +15,13 @@ type SchedDomainLocation = *const bindings::sched_domain;
 type SchedGroupLocation = *const bindings::sched_group;
 type MunchIterator = bindings::munch_iterator;
 
+// Vector of ring buffers, one for each core on the system
+// Each ring buffer stores the most recent load balances on the corresponding core
 struct RustMunchState {
     bufs: Option<KVec<RingBufferLock>>,
 }
 
+// Errors when setting some value in the struct
 #[derive(Debug)]
 enum SetError {
     SDOutOfBounds(usize),
@@ -28,6 +31,7 @@ enum SetError {
     SchedGroupDoesNotExist(SchedGroupLocation),
 }
 
+// Errors when retrieving values from the struct
 #[derive(Debug)]
 enum DumpError {
     CpuOutOfBounds(usize),
@@ -59,7 +63,7 @@ impl DumpError {
     fn print_error(&self) {
         match self {
             DumpError::CpuOutOfBounds(cpu) => pr_alert!("munch error: cpu {} is invalid", cpu),
-            DumpError::BufferOutOfBounds(bytes) => pr_debug!("munch error: buffer ran out of space ({} bytes)", bytes),
+            DumpError::BufferOutOfBounds(bytes) => pr_alert!("munch error: buffer ran out of space ({} bytes)", bytes),
             DumpError::NotSingleByteChar(c) => pr_alert!("munch error: char '{}' cannot be representd as a single byte", c),
             DumpError::EntryOutOfBounds(idx) => pr_alert!("munch error: trying to dump index {}, out of bounds", idx),
             DumpError::NotReadOnly => panic!("munch error: trying to read when not locked"),
@@ -127,6 +131,8 @@ fn create_munch_iterator(cpu: usize) -> MunchIterator {
 }
 */
 
+// printing to procfs helper functions
+
 fn is_start_of_buffer(it: &MunchIterator) -> bool {
     return it.entry_index == 0 && is_start_of_entry(it);
 }
@@ -163,6 +169,11 @@ fn is_last_entry(it: &MunchIterator, buffer: &RingBuffer) -> bool {
     return it.entry_index + 1 == buffer.entries.len();
 }
 
+// Prints the value at the current location of the iterator
+// Checks what we have to currently print (cpu/domain/group information), and prints it
+// SeqFileWrite trait handles how to actually write to the seq_file
+// Only works if one call to this function will always produce at most a page of output
+// If some information is missing, check dmesg for any errors
 fn print_munch_iterator(seq_file: &mut SeqFileWriter, buffer: &RingBuffer, it: &MunchIterator) -> Result<(), DumpError> {
     let entry_index = it.entry_index;
     let entry = buffer.entries.get(entry_index).ok_or(DumpError::EntryOutOfBounds(entry_index))?;
@@ -236,6 +247,7 @@ fn print_munch_iterator(seq_file: &mut SeqFileWriter, buffer: &RingBuffer, it: &
     Ok(())
 }
 
+// Moves the iterator forward by one entry
 fn next_munch_iterator(it: &MunchIterator, buffer: &RingBuffer) -> MunchIterator {
     let mut result = it.clone(); 
 
@@ -336,7 +348,7 @@ impl Drop for RustMunch {
     }
 }
 
-// TODO: use int to compare if a meal descriptor is still valid
+// Gets the entry in the ring buffer corresponding to the meal descriptor
 fn get_current(md: &bindings::meal_descriptor) -> Result<&mut LoadBalanceInfo, SetError> {
     if !md_is_invalid(&*md) {
         let cpu_number = (*md).cpu_number;
@@ -346,6 +358,7 @@ fn get_current(md: &bindings::meal_descriptor) -> Result<&mut LoadBalanceInfo, S
         if let Some(bufs) = maybe_bufs {
             let buf_lock = &mut bufs[cpu_number];
             let buffer = buf_lock.access_writer()?;
+            // If this meal descriptor points to some stale value, don't allow writing in there
             if buffer.age.load(Ordering::SeqCst) == age {
                 return Ok(buffer.get(entry_idx));
             } else {
@@ -557,6 +570,9 @@ fn md_is_invalid(md: &bindings::meal_descriptor) -> bool {
 /// Ring buffer for writing values
 
 // can only write when the readonly flag is false
+// readonly is true if we are currently dumping information to procfs
+// Dumping to procfs affects the state of the system and thus the load balance decisions,
+// so this minimizes the effect.
 struct RingBufferLock {
     readonly: AtomicBool,
     info: RingBuffer,
@@ -603,12 +619,13 @@ impl<'a> RingBufferLock {
 }
 
 struct LoadBalanceInfo {
-    finished: AtomicBool, // if we have finished writing all the information
+    finished: AtomicBool, // if we have finished writing all the information to this entry
     per_sd_info: KVec<LBIPerSchedDomain>,
     per_cpu_info: KVec<LBIPerCpu>,
     current_sd: usize,
 }
 
+// Gets the pointers to each CPU group in a scheduler domain
 fn get_sg_ptrs(cpu: usize, sd: usize) -> KVec<SchedGroupLocation> {
     let sd_ptr = get_sd(cpu, sd).unwrap();
     let sg_count = nr_sched_groups(sd_ptr);  
@@ -658,6 +675,9 @@ impl LoadBalanceInfo {
             panic!("trying to finish an already finished entry");
         }
     }
+
+    // Rust functions that set the value in the struct
+    // To add a new value being logged, add to the corresponding function below
 
     fn set_value_bool(&mut self, location: &bindings::munch_location_bool, x: bool) -> Result<(), SetError> {
         // for debugging, can be removed for performance
@@ -962,11 +982,12 @@ impl RingBuffer {
         };
     }
 
+    // Open a meal descriptor to the next value in the ring buffer
     fn open_meal_descriptor(&mut self) -> bindings::meal_descriptor {
         let idx = self.head.fetch_add(1, Ordering::SeqCst) % self.entries.len();
         let age = self.age.load(Ordering::SeqCst);
 
-        self.entries[idx].reset();
+        self.entries[idx].reset(); // clear current contents
         bindings::meal_descriptor {
             age: age,
             cpu_number: self.cpu,
@@ -985,18 +1006,20 @@ impl RingBuffer {
     }
 }
 
-// Writer Buffer
-// Contains a reference to some other buffer and an index
-// Various methods that try to write
+// Contains a reference to a seq file (in procfs)
+// Also keeps track of how many bytes written to prevent silent overflows over a page
 struct SeqFileWriter {
     seq_file: *mut bindings::seq_file,
     bytes_written: usize,
 }
 
+// If a type implements this trait, it can be written into a seq file
 trait SeqFileWrite {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError>;
 }
 
+// Macros for writing a struct in JSON format
+// This macro recursively writes the portion inside the curly braces
 macro_rules! write_body {
     ($seq_file:ident, $k:ident: $v:expr) => {
         $seq_file.write_kv(stringify!($k), $v)?;
@@ -1008,6 +1031,7 @@ macro_rules! write_body {
     };
 }
 
+// Adds the curly braces to the above call
 macro_rules! define_write {
     ($seq_file:ident, $($key:ident: $value:expr),+ $(,)?) => {
         $seq_file.write(&'{')?; 
@@ -1016,6 +1040,12 @@ macro_rules! define_write {
     };
 }
 
+// Macro that creates a struct where every value is wrapped in an Option
+// Takes in a struct-like declaration
+// Also implements:
+//   - new() - creates a new instance where every value is set to None
+//   - reset() - modifies some instance to set every value back to None
+//   - write() for SeqFileWrite - writes the current entry in JSON format
 macro_rules! defaultable_struct {
     ($name:ident { $($ks:ident: $vs:ty),+ $(,)? }) => {
         struct $name {
@@ -1175,6 +1205,7 @@ impl DerefMut for LBIPerSchedDomain {
     }
 }
 
+// SeqFileWrite implementations for each type
 
 impl SeqFileWrite for u64 {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
@@ -1274,6 +1305,9 @@ impl SeqFileWrite for bool {
     }
 }
 
+// Prints a ring buffer in JSON format
+// "cpu" corresponds to which CPU the information was taken from
+// "entries" corresponds to the ring buffer entries
 impl SeqFileWrite for &RingBuffer {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         define_write!(seq_file,
@@ -1284,6 +1318,7 @@ impl SeqFileWrite for &RingBuffer {
     }
 }
 
+// Writes a KVec as a JSON list
 impl<T: SeqFileWrite> SeqFileWrite for KVec<T> {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         seq_file.write(&'[')?;
@@ -1300,6 +1335,7 @@ impl<T: SeqFileWrite> SeqFileWrite for KVec<T> {
     }
 }
 
+// Writes the value if it exists, or null if it doesn't
 impl<T: SeqFileWrite> SeqFileWrite for Option<T> {
     fn write(&self, seq_file: &mut SeqFileWriter) -> Result<(), DumpError> {
         match self {
@@ -1440,6 +1476,8 @@ impl SeqFileWriter {
         val.write(self)
     }
 
+    // Writes the string, converting _ (Rust convention) to - (Racket convention)
+    // and wrapping it in quotes
     fn write_key(&mut self, key: &str) -> Result<(), DumpError> {
         key.chars().try_for_each(|c| {
             if c == '_' {
@@ -1450,6 +1488,7 @@ impl SeqFileWriter {
         })
     }
 
+    // writes a JSON key/value pair
     fn write_kv<T: SeqFileWrite + ?Sized>(&mut self, key: &str, val: &T) -> Result<(), DumpError> {
         self.write("\"")?;
         self.write_key(key)?;

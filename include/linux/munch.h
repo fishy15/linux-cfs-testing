@@ -6,6 +6,11 @@
 #include <linux/sched/idle.h>
 #include <linux/sched/fair_enums.h>
 
+// There is a separate function for each location (cpu/domain/group) and type (bool/u64/etc),
+// instead of a separate function for each variable. To specify which variable is being assigned to,
+// the appropriate flag needs to be passed in. For example, `munch_u64(MUNCH_DST_CPU, x)` sets the
+// destination CPU for load balancing at the current scheduler domain.
+
 // flag enum
 enum munch_flag {
 	MUNCH_GO_TO_NEXT_SD,
@@ -76,12 +81,16 @@ enum munch_location_u64_group {
 	MUNCH_GROUP_IMBALANCE,
 };
 
+// Contains some metadata about which entry to write to in the ring buffer of load balance information entries.
 struct meal_descriptor {
 	size_t age;
 	size_t cpu_number;
 	size_t entry_idx;
 };
 
+// Iterator for current position inside ring buffer.
+// Output size is more than a page, but only a page can be written to procfs at once.
+// Thus, some iterator is needed that keeps track of the position as we iterate through the struct.
 struct munch_iterator {
 	size_t cpu;
 	size_t entry_index;
@@ -91,6 +100,8 @@ struct munch_iterator {
 	size_t cpu_index;
 };
 
+// vtable, these function pointers are set by Rust code
+// C cannot directly call Rust, so this is needed as a workaround
 struct munch_ops {
 	void (*munch_flag) (struct meal_descriptor *, enum munch_flag);
 	void (*munch_bool) (struct meal_descriptor *, enum munch_location_bool, bool);
@@ -116,6 +127,8 @@ struct munch_ops {
 	void (*finalize_dump) (size_t);
 };
 
+// C function declarations for the above functions
+// Easier interface than checking if `muncher` has been set in `munch_plumbing.c`
 void munch_flag(struct meal_descriptor *, enum munch_flag);
 bool munch_bool(struct meal_descriptor *, enum munch_location_bool, bool);
 uint64_t munch_u64(struct meal_descriptor *, enum munch_location_u64, uint64_t);
